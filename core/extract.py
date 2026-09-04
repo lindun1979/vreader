@@ -60,13 +60,15 @@ def _build_prompt(transcript: str) -> str:
 
 
 def _canonicalize(model_raw: str, canonical: str, models: dict[str, list[str]]) -> str:
-    """防御性二次归一：LLM 给的 canonical 不在表内时，按别名表匹配 raw。"""
-    if canonical in models:
-        return canonical
+    """归一化模型名。**别名表命中优先于 LLM 的 canonical**（别名表是人工校准的
+    ASR 纠错，比 LLM 对乱码的猜测更可信，如 raw='manflash' 应是 Gemini 而非 LLM 猜的
+    MiniMax）。别名未命中时才信任 LLM 的 in-list canonical，否则 UNKNOWN。"""
     low = (model_raw or "").strip().lower()
     for k, aliases in models.items():
         if low == k.lower() or low in {a.lower() for a in (aliases or [])}:
             return k
+    if canonical in models:
+        return canonical
     return "UNKNOWN"
 
 
