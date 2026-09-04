@@ -10,7 +10,7 @@ TX = "我让 Kimi K3 解一个黄金级别的并发问题，它第二轮才解�
 def _one(evidence):
     return json.dumps({"records": [{
         "model_raw": "Kimi K3", "model_canonical": "Kimi K3", "bug_level": "黄金", "bug_id": "G001",
-        "solved": True, "rounds": 2, "evidence_quote": evidence, "confidence": 0.8,
+        "score": 1, "evidence_quote": evidence, "confidence": 0.8,
     }]}, ensure_ascii=False)
 
 

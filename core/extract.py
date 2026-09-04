@@ -70,14 +70,24 @@ def _canonicalize(model_raw: str, canonical: str, models: dict[str, list[str]]) 
     return "UNKNOWN"
 
 
-# 每个等级的最大修复机会（领域先验）
-MAX_ROUNDS = {"青铜": 1, "白银": 1, "黄金": 2, "钻石": 3, "王者": 3}
+# 每个等级的满分（第1轮做对得满分；机会数=满分）。得分反推轮次：rounds=满分-score+1。
+MAX_SCORE = {"青铜": 1, "白银": 1, "黄金": 2, "钻石": 3, "王者": 3}
+
+
+def derive_solved_rounds(level: str, score: int) -> tuple[bool, int | None]:
+    """由等级+得分确定性反推 (solved, rounds)。得分越界返回 (None,None) 表示无效。"""
+    maxs = MAX_SCORE.get(level)
+    if maxs is None or score < 0 or score > maxs:
+        return (None, None)  # type: ignore[return-value]
+    if score == 0:
+        return (False, None)
+    return (True, maxs - score + 1)
 
 
 def _record_id(aweme_id: str, r: dict) -> str:
-    # 含 bug_id 区分同一模型同一等级的不同 bug；不含 confidence。
+    # 含 bug_id 区分同级不同 bug；含 score（编码 solved+rounds）；不含 confidence。
     key = (f"{aweme_id}|{r['model_canonical']}|{r['bug_level']}|{r.get('bug_id','')}"
-           f"|{r['solved']}|{r['rounds']}")
+           f"|{r.get('score')}")
     return hashlib.sha256(key.encode()).hexdigest()[:16]
 
 
@@ -181,6 +191,16 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
     for r in raw_records:
         r = dict(r)
         r["model_canonical"] = _canonicalize(r.get("model_raw", ""), r.get("model_canonical", ""), models)
+        # 由得分反推 solved/rounds（确定性，不靠 LLM 算）
+        level, score = r.get("bug_level"), r.get("score")
+        if not isinstance(score, int):
+            dropped.append((r, f"score 非整数: {score}"))
+            continue
+        solved, rounds = derive_solved_rounds(level, score)
+        if solved is None:
+            dropped.append((r, f"{level} score={score} 越界"))
+            continue
+        r["solved"], r["rounds"] = solved, rounds
         # 逐记录校验：坏记录丢弃（不入榜），不拖垮整条视频
         rerrs = sorted(_record_validator.iter_errors(r), key=lambda e: list(e.path))
         if rerrs:
@@ -189,11 +209,6 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
         # 证据必须是转写子串（归一化后）
         if _normalize_quote(r.get("evidence_quote", "")) not in norm_tx:
             dropped.append((r, "evidence 非转写子串"))
-            continue
-        # 轮次上限（领域先验）：solved 时 rounds 不得超过该等级机会数
-        maxr = MAX_ROUNDS.get(r["bug_level"])
-        if r["solved"] and maxr and (r["rounds"] or 0) > maxr:
-            dropped.append((r, f"{r['bug_level']} rounds={r['rounds']} 超过上限 {maxr}"))
             continue
         records.append(r)
 

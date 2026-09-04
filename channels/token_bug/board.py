@@ -24,12 +24,16 @@ def _cell(attempts: list[dict], level: str) -> str:
     return base
 
 
+def _total_score(records: list[dict]) -> int:
+    return sum(int(r.get("score") or 0) for r in records)
+
+
 def render(extracts: list[dict], visible_ids, record_id_fn) -> str:
     """extracts: extract dict 列表；visible_ids: 允许上榜的 record_id 集合；
     record_id_fn(aweme_id, record)->id。返回 board.md 文本。"""
-    # 汇总 (model, level) -> attempts
+    # 汇总 (model, level) -> attempts；model -> 总分
     grid: dict[tuple[str, str], list[dict]] = {}
-    models: list[str] = []
+    per_model: dict[str, list[dict]] = {}
     n_videos = 0
     for ex in extracts:
         n_videos += 1
@@ -41,21 +45,22 @@ def render(extracts: list[dict], visible_ids, record_id_fn) -> str:
             mc = r["model_canonical"]
             if mc == "UNKNOWN":
                 continue
-            if mc not in models:
-                models.append(mc)
+            per_model.setdefault(mc, []).append(r)
             grid.setdefault((mc, r["bug_level"]), []).append(r)
 
-    models.sort()
+    # 按总分降序排名（并列按名字）
+    models = sorted(per_model, key=lambda m: (-_total_score(per_model[m]), m))
     lines = ["# token（词源）模型 × 难度 榜单", ""]
-    lines.append(f"_覆盖 {n_videos} 条视频；单元格 = 解出数/尝试数，黄金及以上标注第几次修复解出。空=未测。_")
+    lines.append(f"_覆盖 {n_videos} 条视频；总分按计分规则累计（黄金满2/钻石王者满3）；"
+                 f"单元格=解出数/尝试数，黄金及以上标注第几次修复解出。空=未测。_")
     lines.append("")
-    lines.append("| 模型 | " + " | ".join(LEVELS) + " |")
-    lines.append("|---|" + "---|" * len(LEVELS))
-    for m in models:
+    lines.append("| 排名 | 模型 | 总分 | " + " | ".join(LEVELS) + " |")
+    lines.append("|---|---|---|" + "---|" * len(LEVELS))
+    for i, m in enumerate(models, 1):
         cells = [_cell(grid.get((m, lv), []), lv) for lv in LEVELS]
-        lines.append(f"| {m} | " + " | ".join(cells) + " |")
+        lines.append(f"| {i} | {m} | {_total_score(per_model[m])} | " + " | ".join(cells) + " |")
     if not models:
-        lines.append("| _（暂无上榜记录）_ |" + " |" * len(LEVELS))
+        lines.append("| — | _（暂无上榜记录）_ | 0 |" + " |" * len(LEVELS))
     lines.append("")
     return "\n".join(lines)
 

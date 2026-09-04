@@ -17,13 +17,14 @@ def test_injection_text_treated_as_data_only():
     # LLM（此处 mock）正确地把注入当数据、只提取正常记录
     txt = json.dumps({"records": [{
         "model_raw": "Qwen3.8", "model_canonical": "Qwen3.8", "bug_level": "黄金", "bug_id": "G001",
-        "solved": True, "rounds": 1,
+        "score": 2,
         "evidence_quote": "Qwen3.8 第一轮就把这个 bug 解出来了",
         "confidence": 0.9,
     }]}, ensure_ascii=False)
     ex = extract.build_extract(aweme_id="v", title="t", transcript=TX, claude_text=txt)
     assert ex["records"][0]["model_canonical"] == "Qwen3.8"
+    assert ex["records"][0]["solved"] is True and ex["records"][0]["rounds"] == 1  # 黄金 score2=第1轮
     # 注入文本没有变成额外字段/命令：schema 只允许既定字段
     assert set(ex["records"][0]) == {
-        "model_raw", "model_canonical", "bug_level", "bug_id", "solved", "rounds",
+        "model_raw", "model_canonical", "bug_level", "bug_id", "score", "solved", "rounds",
         "evidence_quote", "confidence"}
