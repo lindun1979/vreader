@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "token_bug extract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["video_id", "title", "extracted_at", "extractor_version", "prompt_hash", "asr_model", "records"],
+  "properties": {
+    "video_id": {"type": "string", "minLength": 1},
+    "title": {"type": "string"},
+    "extracted_at": {"type": "string", "minLength": 1},
+    "extractor_version": {"type": "string", "minLength": 1},
+    "prompt_hash": {"type": "string", "minLength": 1},
+    "asr_model": {"type": "string", "minLength": 1},
+    "records": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["model_canonical", "model_raw", "bug_level", "rounds", "solved", "evidence_quote", "confidence"],
+        "properties": {
+          "model_canonical": {"type": "string", "minLength": 1},
+          "model_raw": {"type": "string"},
+          "bug_level": {"type": "string", "enum": ["青铜", "白银", "黄金", "钻石", "王者"]},
+          "rounds": {"type": ["integer", "null"], "minimum": 1},
+          "solved": {"type": "boolean"},
+          "evidence_quote": {"type": "string", "minLength": 10},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"solved": {"const": true}}},
+            "then": {"properties": {"rounds": {"type": "integer", "minimum": 1}}}
+          },
+          {
+            "if": {"properties": {"solved": {"const": false}}},
+            "then": {"properties": {"rounds": {"type": "null"}}}
+          }
+        ]
+      }
+    }
+  }
+}

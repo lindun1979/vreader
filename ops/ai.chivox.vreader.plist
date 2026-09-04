@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- launchd 模板。部署时把 __RELEASE__ 换成实际发布目录（current 软链）。
+     launchd 不继承 shell 环境（learnings deploy/launchd-cron-env-not-inherited），
+     故解释器/PATH 全部写死。 -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>ai.chivox.vreader</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__RELEASE__/.venv/bin/python</string>
+    <string>-m</string>
+    <string>core.service</string>
+  </array>
+  <key>WorkingDirectory</key><string>__RELEASE__</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/vreader.out.log</string>
+  <key>StandardErrorPath</key><string>/tmp/vreader.err.log</string>
+</dict>
+</plist>

@@ -1,0 +1,58 @@
+# 模型规范 ID + 别名/ASR 常见错写映射。
+# canonical: [别名与 ASR 可能错写...]。提取层把 model_raw 归一到 canonical。
+# 按版本/产品分层，不同版本不合并。ASR（SenseVoice）常把英文型号听错，这里收集常见错写。
+
+Claude Opus 4.1:
+  - claude opus 4.1
+  - opus 4.1
+  - 克劳德 opus 4.1
+Claude Sonnet 4.5:
+  - claude sonnet 4.5
+  - sonnet 4.5
+  - 十四点五
+Claude Sonnet 4:
+  - claude sonnet 4
+  - sonnet 4
+GPT-5:
+  - gpt5
+  - gpt 5
+  - g p t 5
+  - 鸡皮踢5
+GPT-4.1:
+  - gpt4.1
+  - gpt 4.1
+  - gpt four one
+GPT-4o:
+  - gpt4o
+  - gpt 4o
+  - gpt four o
+Gemini 2.5 Pro:
+  - gemini 2.5 pro
+  - 双子星 2.5 pro
+  - 吉米奈 2.5 pro
+Gemini 2.5 Flash:
+  - gemini 2.5 flash
+DeepSeek V3:
+  - deepseek v3
+  - deep seek v3
+  - 深度求索 v3
+DeepSeek R1:
+  - deepseek r1
+  - deep seek r1
+Qwen3:
+  - qwen3
+  - qwen 3
+  - 通义千问3
+  - 千问3
+Kimi K2:
+  - kimi k2
+  - kimi
+  - 克米 k2
+GLM-4.5:
+  - glm 4.5
+  - glm4.5
+  - 智谱 4.5
+Grok 4:
+  - grok 4
+  - grok4
+  - 格罗克 4

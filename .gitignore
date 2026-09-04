@@ -1,0 +1,20 @@
+# 凭据与本地部署细节（public 仓纪律）
+.env
+DEPLOY.local.md
+*cookies*.txt
+
+# 数据：视频/音频/转写/提取/DB/榜单——他人版权内容，绝不进公开仓
+data/
+tests/fixtures/*.private.*
+tests/gold/**/*.mp4
+tests/gold/**/*.wav
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# 规划文档含内网拓扑（生产路径/端口/内部服务名），不进公开仓
+docs/plans/
