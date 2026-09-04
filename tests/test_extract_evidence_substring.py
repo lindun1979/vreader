@@ -4,12 +4,12 @@ import pytest
 
 from core import extract
 
-TX = "我让 Kimi K2 解一个白银级别的并发问题，它第二轮才解出来，还算可以。"
+TX = "我让 Kimi K3 解一个黄金级别的并发问题，它第二轮才解出来，还算可以。"
 
 
 def _one(evidence):
     return json.dumps({"records": [{
-        "model_raw": "Kimi K2", "model_canonical": "Kimi K2", "bug_level": "白银",
+        "model_raw": "Kimi K3", "model_canonical": "Kimi K3", "bug_level": "黄金", "bug_id": "G001",
         "solved": True, "rounds": 2, "evidence_quote": evidence, "confidence": 0.8,
     }]}, ensure_ascii=False)
 
@@ -30,4 +30,4 @@ def test_evidence_whitespace_normalized():
     # 转写有此句；证据带多余空白仍应匹配（归一化后子串）
     ex = extract.build_extract(aweme_id="v", title="t", transcript=TX,
                                claude_text=_one("它  第二轮 才解出来"))
-    assert ex["records"][0]["model_canonical"] == "Kimi K2"
+    assert ex["records"][0]["model_canonical"] == "Kimi K3"

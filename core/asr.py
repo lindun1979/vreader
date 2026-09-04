@@ -25,26 +25,62 @@ def _load():
     return _model
 
 
+# 分块时长（秒）：长视频整段喂入 funasr 会占用大量内存（实测 16min 视频峰值
+# 10GB+，拖垮 16GB 生产机）。按此窗口切块逐块转写、拼接，把内存限制在单块。
+_CHUNK_S = 300
+
+
 def extract_wav(video_path: str, wav_path: str) -> str:
     """ffmpeg 抽 16k 单声道 wav。已存在则跳过。"""
     if Path(wav_path).exists() and Path(wav_path).stat().st_size > 0:
         return wav_path
     Path(wav_path).parent.mkdir(parents=True, exist_ok=True)
+    from . import config
     subprocess.run(
-        ["ffmpeg", "-y", "-i", video_path, "-vn", "-ac", "1", "-ar", "16000",
+        [config.FFMPEG_BIN, "-y", "-i", video_path, "-vn", "-ac", "1", "-ar", "16000",
          "-f", "wav", wav_path],
         check=True, capture_output=True)
     return wav_path
 
 
-def transcribe(wav_path: str) -> str:
-    """转写整段音频，返回纯文本（已做 rich 后处理）。"""
+def _wav_duration(wav_path: str) -> float:
+    import wave
+    with wave.open(wav_path, "rb") as w:
+        return w.getnframes() / float(w.getframerate() or 16000)
+
+
+def _transcribe_file(wav_path: str) -> str:
     from funasr.utils.postprocess_utils import rich_transcription_postprocess
     m = _load()
     res = m.generate(input=wav_path, cache={}, language="auto", use_itn=True,
                      batch_size_s=60, merge_vad=True, merge_length_s=15)
-    text = res[0]["text"] if res else ""
-    return rich_transcription_postprocess(text)
+    return rich_transcription_postprocess(res[0]["text"] if res else "")
+
+
+def transcribe(wav_path: str) -> str:
+    """转写音频，返回纯文本。长音频按 _CHUNK_S 分块逐块转写（限内存）。"""
+    import subprocess
+    import tempfile
+    from . import config
+    dur = _wav_duration(wav_path)
+    if dur <= _CHUNK_S:
+        return _transcribe_file(wav_path)
+    parts: list[str] = []
+    tmpdir = tempfile.mkdtemp(prefix="vr_asr_")
+    try:
+        offset = 0.0
+        while offset < dur:
+            chunk = f"{tmpdir}/chunk.wav"
+            subprocess.run(
+                [config.FFMPEG_BIN, "-y", "-ss", str(offset), "-t", str(_CHUNK_S),
+                 "-i", wav_path, "-ac", "1", "-ar", "16000", "-f", "wav", chunk],
+                check=True, capture_output=True)
+            parts.append(_transcribe_file(chunk))
+            offset += _CHUNK_S
+    finally:
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)
+    return "".join(parts)
 
 
 def video_to_transcript(video_path: str, wav_path: str, transcript_path: str) -> str:

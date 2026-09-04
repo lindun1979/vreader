@@ -7,6 +7,7 @@
   "properties": {
     "video_id": {"type": "string", "minLength": 1},
     "title": {"type": "string"},
+    "dropped_count": {"type": "integer", "minimum": 0},
     "extracted_at": {"type": "string", "minLength": 1},
     "extractor_version": {"type": "string", "minLength": 1},
     "prompt_hash": {"type": "string", "minLength": 1},
@@ -17,11 +18,12 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["model_canonical", "model_raw", "bug_level", "rounds", "solved", "evidence_quote", "confidence"],
+        "required": ["model_canonical", "model_raw", "bug_level", "bug_id", "rounds", "solved", "evidence_quote", "confidence"],
         "properties": {
           "model_canonical": {"type": "string", "minLength": 1},
           "model_raw": {"type": "string"},
           "bug_level": {"type": "string", "enum": ["青铜", "白银", "黄金", "钻石", "王者"]},
+          "bug_id": {"type": "string"},
           "rounds": {"type": ["integer", "null"], "minimum": 1},
           "solved": {"type": "boolean"},
           "evidence_quote": {"type": "string", "minLength": 10},

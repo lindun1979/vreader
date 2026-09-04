@@ -23,7 +23,9 @@ _PROMPT_PATH = _CH_DIR / "extract_prompt.md"
 _MODELS_PATH = _CH_DIR / "models.yml"
 _SCHEMA_PATH = config.ROOT / "schemas" / "token_bug.extract.schema.json"
 
-_validator = Draft202012Validator(json.loads(_SCHEMA_PATH.read_text(encoding="utf-8")))
+_SCHEMA = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
+_validator = Draft202012Validator(_SCHEMA)
+_record_validator = Draft202012Validator(_SCHEMA["properties"]["records"]["items"])
 
 
 class ExtractError(Exception):
@@ -68,9 +70,62 @@ def _canonicalize(model_raw: str, canonical: str, models: dict[str, list[str]]) 
     return "UNKNOWN"
 
 
+# 每个等级的最大修复机会（领域先验）
+MAX_ROUNDS = {"青铜": 1, "白银": 1, "黄金": 2, "钻石": 3, "王者": 3}
+
+
 def _record_id(aweme_id: str, r: dict) -> str:
-    key = f"{aweme_id}|{r['model_canonical']}|{r['bug_level']}|{r['solved']}|{r['rounds']}"
+    # 含 bug_id 区分同一模型同一等级的不同 bug；不含 confidence。
+    key = (f"{aweme_id}|{r['model_canonical']}|{r['bug_level']}|{r.get('bug_id','')}"
+           f"|{r['solved']}|{r['rounds']}")
     return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
+def _call_llm(prompt: str, *, timeout: int | None = None) -> str:
+    timeout = timeout or config.LLM_TIMEOUT
+    if config.LLM_BACKEND == "claude":
+        return _call_claude(prompt, timeout=timeout)
+    # 推理模型偶发超时/空返回：重试一次
+    last: Exception | None = None
+    for attempt in range(2):
+        try:
+            out = _call_openai(prompt, timeout=timeout)
+            if out.strip():
+                return out
+            last = ExtractError("LLM 返回空")
+        except ExtractError as e:
+            last = e
+    raise last or ExtractError("LLM 调用失败")
+
+
+def _call_openai(prompt: str, *, timeout: int = 300) -> str:
+    """调 OpenAI 兼容端点（:8317 cliproxy 的 oc-qwen3.8-flash 等）。"""
+    import urllib.request
+    import urllib.error
+    body = json.dumps({
+        "model": config.LLM_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0,
+    }).encode()
+    req = urllib.request.Request(
+        config.LLM_BASE_URL.rstrip("/") + "/chat/completions", data=body,
+        method="POST", headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {config.LLM_API_KEY}",
+        })
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.URLError as e:
+        raise ExtractError(f"LLM 请求失败: {e}") from e
+    except json.JSONDecodeError as e:
+        raise ExtractError(f"LLM 响应非 JSON: {e}") from e
+    if data.get("error"):
+        raise ExtractError(f"LLM 错误: {data['error']}")
+    try:
+        return data["choices"][0]["message"]["content"] or ""
+    except (KeyError, IndexError) as e:
+        raise ExtractError(f"LLM 响应缺 content: {str(data)[:200]}") from e
 
 
 def _call_claude(prompt: str, *, timeout: int = 300) -> str:
@@ -118,18 +173,33 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
     """把 LLM 输出组装为 extract 对象并做全部校验；不写库。校验失败抛 ExtractError。"""
     models = _load_models()
     if claude_text is None:
-        claude_text = _call_claude(_build_prompt(transcript))
+        claude_text = _call_llm(_build_prompt(transcript))
     raw_records = _parse_records_json(claude_text)
 
     norm_tx = _normalize_quote(transcript)
-    records = []
+    records, dropped = [], []
     for r in raw_records:
         r = dict(r)
         r["model_canonical"] = _canonicalize(r.get("model_raw", ""), r.get("model_canonical", ""), models)
+        # 逐记录校验：坏记录丢弃（不入榜），不拖垮整条视频
+        rerrs = sorted(_record_validator.iter_errors(r), key=lambda e: list(e.path))
+        if rerrs:
+            dropped.append((r, rerrs[0].message))
+            continue
         # 证据必须是转写子串（归一化后）
         if _normalize_quote(r.get("evidence_quote", "")) not in norm_tx:
-            raise ExtractError(f"证据片段非转写子串: {r.get('evidence_quote','')[:40]}")
+            dropped.append((r, "evidence 非转写子串"))
+            continue
+        # 轮次上限（领域先验）：solved 时 rounds 不得超过该等级机会数
+        maxr = MAX_ROUNDS.get(r["bug_level"])
+        if r["solved"] and maxr and (r["rounds"] or 0) > maxr:
+            dropped.append((r, f"{r['bug_level']} rounds={r['rounds']} 超过上限 {maxr}"))
+            continue
         records.append(r)
+
+    if not records:
+        reason = dropped[0][1] if dropped else "无记录"
+        raise ExtractError(f"无有效记录（丢弃 {len(dropped)} 条，首因: {reason}）")
 
     extract = {
         "video_id": aweme_id,
@@ -139,8 +209,11 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
         "prompt_hash": prompt_hash(),
         "asr_model": _asr_model_id(),
         "records": records,
+        "dropped_count": len(dropped),
     }
-    errs = sorted(_validator.iter_errors(extract), key=lambda e: e.path)
+    # 兜底整体校验（envelope）
+    errs = sorted(_validator.iter_errors({k: v for k, v in extract.items() if k != "dropped_count"}),
+                  key=lambda e: list(e.path))
     if errs:
         raise ExtractError(f"extract schema 校验失败: {errs[0].message}")
     return extract

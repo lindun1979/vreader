@@ -8,17 +8,20 @@ import json
 from pathlib import Path
 
 LEVELS = ["青铜", "白银", "黄金", "钻石", "王者"]
+_ROUNDS_SHOWN = {"黄金", "钻石", "王者"}  # 这些等级标注第几次解出
 
 
-def _cell(attempts: list[dict]) -> str:
+def _cell(attempts: list[dict], level: str) -> str:
     if not attempts:
         return "—"
     n = len(attempts)
     solved = [a for a in attempts if a["solved"]]
-    if solved:
-        avg_r = sum(a["rounds"] for a in solved) / len(solved)
-        return f"{len(solved)}/{n}胜·均{avg_r:.1f}轮"
-    return f"0/{n}胜"
+    base = f"{len(solved)}/{n}"
+    # 黄金及以上：标注每个解出的 bug 是第几次修复对的
+    if level in _ROUNDS_SHOWN and solved:
+        rs = ",".join(str(a["rounds"]) for a in solved)
+        return f"{base}·第[{rs}]次"
+    return base
 
 
 def render(extracts: list[dict], visible_ids, record_id_fn) -> str:
@@ -44,12 +47,12 @@ def render(extracts: list[dict], visible_ids, record_id_fn) -> str:
 
     models.sort()
     lines = ["# token（词源）模型 × 难度 榜单", ""]
-    lines.append(f"_覆盖 {n_videos} 条视频；单元格 = 解出场次/总场次·平均轮次。空=未测。_")
+    lines.append(f"_覆盖 {n_videos} 条视频；单元格 = 解出数/尝试数，黄金及以上标注第几次修复解出。空=未测。_")
     lines.append("")
     lines.append("| 模型 | " + " | ".join(LEVELS) + " |")
     lines.append("|---|" + "---|" * len(LEVELS))
     for m in models:
-        cells = [_cell(grid.get((m, lv), [])) for lv in LEVELS]
+        cells = [_cell(grid.get((m, lv), []), lv) for lv in LEVELS]
         lines.append(f"| {m} | " + " | ".join(cells) + " |")
     if not models:
         lines.append("| _（暂无上榜记录）_ |" + " |" * len(LEVELS))

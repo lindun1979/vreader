@@ -34,7 +34,17 @@ HMAC_SECRET = get("VREADER_HMAC_SECRET", "")
 FEISHU_APP_ID = get("FEISHU_APP_ID", "")
 FEISHU_APP_SECRET = get("FEISHU_APP_SECRET", "")
 CLAUDE_BIN = get("CLAUDE_BIN", "claude")
+# ffmpeg 绝对路径（launchd/非登录 shell PATH 不含 /usr/local/bin，learnings
+# deploy/launchd-cron-env-not-inherited）。生产 .env 写 /usr/local/bin/ffmpeg。
+FFMPEG_BIN = get("FFMPEG_BIN", "ffmpeg")
 ADMIN_SENDER_ID = get("VREADER_ADMIN_SENDER_ID", "")
+
+# 提取 LLM 后端：openai（:8317 cliproxy，默认）| claude（本地 CLI 兜底）
+LLM_BACKEND = get("LLM_BACKEND", "openai")
+LLM_BASE_URL = get("LLM_BASE_URL", "http://127.0.0.1:8317/v1")
+LLM_API_KEY = get("LLM_API_KEY", "")
+LLM_MODEL = get("LLM_MODEL", "oc-qwen3.8-flash")
+LLM_TIMEOUT = int(get("LLM_TIMEOUT", "600"))  # 推理模型对长乱码转写可能很慢
 
 # 资源上限
 MAX_DURATION_S = 30 * 60

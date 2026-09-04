@@ -102,23 +102,28 @@ def _aweme_from_url(url: str) -> str | None:
     return m.group(1) if m else None
 
 
-def fetch_detail(aweme_id: str) -> dict:
-    """调 web detail API，返回 aweme_detail dict。带一次 ttwid 刷新重试。"""
-    for attempt in range(2):
+def fetch_detail(aweme_id: str, *, attempts: int = 5) -> dict:
+    """调 web detail API，返回 aweme_detail dict。
+
+    detail API 有瞬时频控（403/空返回）：每次失败刷新 ttwid + 退避重试。
+    """
+    last_err: str = ""
+    for attempt in range(attempts):
         ttwid = _get_ttwid(force=attempt > 0)
         url = f"{_DETAIL}?aweme_id={aweme_id}&{_DETAIL_PARAMS}"
         req = urllib.request.Request(url, headers=_headers(ttwid))
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
                 data = json.loads(resp.read())
+            detail = (data or {}).get("aweme_detail")
+            if detail:
+                return detail
+            last_err = "aweme_detail 为空"
         except (urllib.error.URLError, json.JSONDecodeError) as e:
-            if attempt == 1:
-                raise DownloadError(f"detail API 请求失败: {e}") from e
-            continue
-        detail = (data or {}).get("aweme_detail")
-        if detail:
-            return detail
-    raise DownloadError(f"detail API 未返回 aweme_detail（可能需刷新 cookie/签名）: {aweme_id}")
+            last_err = str(e)
+        if attempt < attempts - 1:
+            time.sleep(1.5 * (attempt + 1))  # 退避
+    raise DownloadError(f"detail API 失败（{attempts} 次）: {last_err} :: {aweme_id}")
 
 
 def meta_from_detail(detail: dict) -> dict:
