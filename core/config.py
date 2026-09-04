@@ -44,6 +44,8 @@ LLM_BACKEND = get("LLM_BACKEND", "openai")
 LLM_BASE_URL = get("LLM_BASE_URL", "http://127.0.0.1:8317/v1")
 LLM_API_KEY = get("LLM_API_KEY", "")
 LLM_MODEL = get("LLM_MODEL", "oc-qwen3.8-flash")
+# 主模型不可用（provider 授权失效/503）时的兜底模型链（逗号分隔）
+LLM_MODEL_FALLBACK = [m.strip() for m in get("LLM_MODEL_FALLBACK", "").split(",") if m.strip()]
 LLM_TIMEOUT = int(get("LLM_TIMEOUT", "600"))  # 推理模型对长乱码转写可能很慢
 
 # 资源上限

@@ -95,25 +95,29 @@ def _call_llm(prompt: str, *, timeout: int | None = None) -> str:
     timeout = timeout or config.LLM_TIMEOUT
     if config.LLM_BACKEND == "claude":
         return _call_claude(prompt, timeout=timeout)
-    # 推理模型偶发超时/空返回：重试一次
+    # 主模型 + 兜底链；每个模型重试一次（偶发超时/空返回/授权不可用）
     last: Exception | None = None
-    for attempt in range(2):
-        try:
-            out = _call_openai(prompt, timeout=timeout)
-            if out.strip():
-                return out
-            last = ExtractError("LLM 返回空")
-        except ExtractError as e:
-            last = e
+    for model in [config.LLM_MODEL, *config.LLM_MODEL_FALLBACK]:
+        for _ in range(2):
+            try:
+                out = _call_openai(prompt, timeout=timeout, model=model)
+                if out.strip():
+                    return out
+                last = ExtractError("LLM 返回空")
+            except ExtractError as e:
+                last = e
+                # 授权不可用/服务不可用 → 直接切下一个模型
+                if any(s in str(e) for s in ("auth_unavailable", "503", "unavailable")):
+                    break
     raise last or ExtractError("LLM 调用失败")
 
 
-def _call_openai(prompt: str, *, timeout: int = 300) -> str:
+def _call_openai(prompt: str, *, timeout: int = 300, model: str | None = None) -> str:
     """调 OpenAI 兼容端点（:8317 cliproxy 的 oc-qwen3.8-flash 等）。"""
     import urllib.request
     import urllib.error
     body = json.dumps({
-        "model": config.LLM_MODEL,
+        "model": model or config.LLM_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0,
     }).encode()
