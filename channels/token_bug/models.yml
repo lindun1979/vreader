@@ -1,7 +1,7 @@
 # 模型规范 ID + 别名/ASR 常见错写映射。
-# canonical: [别名与 ASR 可能错写...]。提取层把 model_raw 归一到 canonical。
-# 按版本/产品分层，不同版本不合并。该博主实测的是当代前沿模型，ASR（SenseVoice）
-# 常把中英混说的型号听错（如 GLM5.3→"GM5点3"/"国模一哥"），LLM 结合此表纠正。
+# canonical: [别名与 ASR 可能错写...]。提取层把 model_raw 归一到 canonical；
+# 别名命中优先于 LLM 的 canonical（人工校准的 ASR 纠错更可信）。
+# 模型清单以博主真值标注为准（tests/gold/token_bug/*）。
 
 # —— 国产 ——
 GLM-5.3:
@@ -15,6 +15,7 @@ GLM-5.3:
 GLM-5.3 Flash:
   - glm5.3 flash
   - glm 5.3 flash
+  - 小一哥
 DeepSeek V4:
   - deepseek v4
   - deepseekv4
@@ -26,9 +27,6 @@ DeepSeek V4 Pro:
   - v4 pro
   - 4pro
   - pro
-DSH:
-  - dsh
-  - deepseek dsh
 DeepSeek V4 Flash:
   - deepseek v4 flash
   - deepseekv4flash
@@ -40,6 +38,8 @@ Qwen3.8:
 Qwen3.8 Flash:
   - qwen3.8 flash
   - qwen 3.8 flash
+  - owen 3.8 flash
+  - owen3.8 flash
 Kimi K3:
   - kimi k3
   - k3
@@ -50,31 +50,55 @@ Hunyuan 3.0:
   - hy3.0
   - hy3
   - 混元 3.0
-Hunyuan 4:
-  - hunyuan 4
-  - hy4
-  - 混元 4
-MiniMax M3:
-  - minimax m3
-  - minimax-m3
+  - 混元3.0
+MiMo 2.5 Pro:
+  - mimo 2.5 pro
+  - mimo2.5 pro
+  - 小米 mimo
+  - 米某 2.5
+Doubao Seed 2.1:
+  - doubao seed 2.1
+  - 豆包 seed 2.1
+  - 豆姐
+  - 豆包
+Doubao 2.1 Pro:
+  - doubao 2.1 pro
+  - 豆包 2.1 pro
+Step 3.7 Flash:
+  - step 3.7 flash
+  - step3.7 flash
+  - 阶跃 3.7
+  - 阶跃星辰 3.7
+Muse Spark 1.2:
+  - muse spark 1.2
+  - musespark 1.2
+  - muse spark1.2
+  - 缪斯 1.2
+Longcat 2.0:
+  - longcat 2.0
+  - longcat2.0
+  - 龙猫 2.0
+  - 龙猫
 
 # —— 海外 ——
 Fable 5.1:
   - fable5.1
   - fable 5.1
+  - claude fable 5.1
+  - 飞包 5.1
+  - 飞包
   - 费波 5.1
 Claude Opus 5:
   - claude opus 5
+  - claude opus 5.0
   - opus 5
+  - opus 5.0
   - opus
   - 克劳德 opus
 Claude Opus 4.8:
   - claude opus 4.8
   - opus 4.8
   - opus4.8
-Claude Opus 4.5:
-  - claude opus 4.5
-  - opus 4.5
 Claude Sonnet 4.5:
   - claude sonnet 4.5
   - sonnet 4.5
@@ -82,17 +106,14 @@ Gemini 3.7 Flash:
   - gemini 3.7 flash
   - gemini3.7
   - 双子星 3.7
+  - 北美大豆包
+  - 北美豆包
   - manflash
   - manyflash
   - manf
-Gemini 3.5:
-  - gemini 3.5
-  - gemini3.5
 Grok 4.6:
   - grok 4.6
   - grok4.6
   - 格罗克 4.6
-GPT-5.6:
-  - gpt5.6
-  - gpt 5.6
-  - gpt-5.6-luna
+  - 火星选手
+  - 火星
