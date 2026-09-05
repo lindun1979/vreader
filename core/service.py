@@ -144,6 +144,8 @@ class _Handler(BaseHTTPRequestHandler):
         conn = db.connect(db_path())
         try:
             code, reply = handler(conn, payload)
+        except Exception as e:  # noqa: BLE001 兜底：handler 任何异常都不许崩连接
+            code, reply = 500, f"内部错误：{str(e)[:100]}"
         finally:
             conn.close()
         self._send(code, reply)

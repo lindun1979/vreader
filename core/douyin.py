@@ -72,9 +72,9 @@ def _get_ttwid(force: bool = False) -> str:
 def resolve_aweme_id(share_text: str) -> str:
     """从分享文本/链接解析出 aweme_id。短链会跟随重定向。"""
     m = _URL_RE.search(share_text or "")
-    url = m.group(0) if m else (share_text or "").strip()
-    if not url:
+    if not m:
         raise DownloadError("分享文本中未找到链接")
+    url = m.group(0)
     # 长链直接可解析
     aid = _aweme_from_url(url)
     if aid:
