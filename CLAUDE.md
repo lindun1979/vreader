@@ -3,10 +3,17 @@
 视频博主 → 结构化知识平台。首个频道 token_bug（抖音「token（词源）」模型实测榜单）。
 详细规划见 `docs/plans/vreader-mvp-plan-v6.md`（经 6 轮对抗评审收敛）。
 
+**状态：已上线生产（launchd `ai.chivox.vreader`，运维斯登记）。** 两次真人端到端通过，
+对用户真值集准确率 91%（gemini-2.5-flash）。
+
 ## 架构速记
 - 入口：飞书（复用 life-assistant 飞书号，skill_router HMAC 透传到本服务 127.0.0.1:8232）。
-- 管线：解析 aweme_id → 下载 → ffmpeg wav → SenseVoice → claude 提取 → 决策 → board.md。
+- 管线：解析 aweme_id → 下载 → ffmpeg wav → SenseVoice(分块) → LLM 提取 → 决策 → board.md。
 - 下载：**不用 yt-dlp**（Douyin extractor 漏参已坏），直连 web detail API + 匿名 ttwid。
+- 提取 LLM：生产机 :8317 cliproxy 的 **gemini-2.5-flash**（主，91% 准；40 rpd），
+  兜底 gemini-3.1-flash-lite（快但 71%）；配 LLM_MODEL/LLM_MODEL_FALLBACK。得分驱动
+  （LLM 只提 score，代码反推 solved/rounds）。标题作对战名单提召回。
+- ASR：SenseVoiceSmall（CPU）。长视频**必须分块**转写（整段喂入峰值 10GB+ 拖垮 16G 机）。
 - 存储：SQLite（tasks / notification_outbox / record_decisions），WAL、每线程独立连接。
 
 ## 关键不变量（勿破坏）
@@ -22,8 +29,9 @@
 launchd 管理（禁 nohup），登记运维斯 SERVICES.md。
 
 ## 测试
-`pytest -q`（M2 门禁全绿）。手动处理：`python -m core.cli "<链接>"`。
-真值集（M1 门禁）：5 条覆盖五级难度、人工标注，放 `tests/gold/token_bug/`（gitignore）。
+`pytest -q`（45 项全绿）。手动处理：`python -m core.cli "<链接>"`。
+真值集：`tests/gold/token_bug/gold.json`（用户人工标注 6 视频 97 格得分，进仓）；
+准确率评测脚本思路见开发记录（提取 vs 真值按 模型×等级 比对）。
 
 ## 纪律
 public 仓：凭据→.env，内网细节→DEPLOY.local.md，版权数据→data/，均 gitignore。

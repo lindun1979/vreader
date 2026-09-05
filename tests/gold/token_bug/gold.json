@@ -1,31 +1,225 @@
 {
   "_note": "博主真值标注（用户人工，得分制：青铜白银0-1；黄金第1轮2/第2轮1/失败0；钻石王者第1轮3/2轮2/3轮1/失败0）。score→(solved,rounds) 由代码反推。",
   "videos": [
-    {"link": "https://v.douyin.com/y2XnlzEwwRc/", "title": "Fable5.1和GLM5.3 D组第一轮",
-     "bugs": ["S005","G005","D004"],
-     "truth": {"Fable 5.1":{"S005":1,"G005":2,"D004":3}, "GLM-5.3":{"S005":1,"G005":2,"D004":2},
-               "MiMo 2.5 Pro":{"S005":1,"G005":0,"D004":0}, "Doubao Seed 2.1":{"S005":1,"G005":1,"D004":0}}},
-    {"link": "https://v.douyin.com/DMMOMDIFnso/", "title": "中年K3大战青年Grok4.6",
-     "bugs": ["S003","G003","D001"],
-     "truth": {"Kimi K3":{"S003":1,"G003":0,"D001":2}, "Grok 4.6":{"S003":1,"G003":2,"D001":2},
-               "DeepSeek V4 Pro":{"S003":1,"G003":1,"D001":1}, "Step 3.7 Flash":{"S003":1,"G003":0,"D001":0}}},
-    {"link": "https://v.douyin.com/APNAtxERAVQ/", "title": "Flash大乱斗",
-     "bugs": ["S002","G002","D002","K005"],
-     "truth": {"GLM-5.3 Flash":{"S002":0,"G002":1,"D002":1,"K005":0}, "DeepSeek V4 Flash":{"S002":1,"G002":1,"D002":1,"K005":0},
-               "Qwen3.8 Flash":{"S002":1,"G002":2,"D002":2,"K005":0}, "Gemini 3.7 Flash":{"S002":1,"G002":2,"D002":0,"K005":0}}},
-    {"link": "https://v.douyin.com/pmYNxOxzbVQ/", "title": "SHI山B组第一轮 DeepSeek/Opus Gemini/Hy3.0",
-     "bugs": ["S004","G003","D003"],
-     "truth": {"Claude Opus 5":{"S004":1,"G003":2,"D003":3}, "DeepSeek V4 Flash":{"S004":1,"G003":0,"D003":3},
-               "Gemini 3.7 Flash":{"S004":1,"G003":2,"D003":0}, "Hunyuan 3.0":{"S004":1,"G003":0,"D003":2}}},
-    {"link": "https://v.douyin.com/Y3bEB3CHKgA/", "title": "MuseSpark1.2 秋季赛",
-     "bugs": ["S002","G002","G003"],
-     "truth": {"Muse Spark 1.2":{"S002":1,"G002":2,"G003":2}, "Step 3.7 Flash":{"S002":1,"G002":0,"G003":2},
-               "Hunyuan 3.0":{"S002":1,"G002":0,"G003":2}, "Longcat 2.0":{"S002":0,"G002":0,"G003":0},
-               "Doubao 2.1 Pro":{"S002":0,"G002":0,"G003":0}}},
-    {"link": "https://v.douyin.com/VVuUgYnvpdE/", "title": "开源闭源大决战",
-     "bugs": ["B001","S004","G002","D001","K005"],
-     "truth": {"DeepSeek V4 Pro":{"B001":1,"S004":0,"G002":1,"D001":1,"K005":2}, "GLM-5.3":{"B001":1,"S004":1,"G002":2,"D001":1,"K005":0},
-               "Kimi K3":{"B001":1,"S004":1,"G002":2,"D001":1,"K005":0}, "Gemini 3.7 Flash":{"B001":1,"S004":1,"G002":2,"D001":0,"K005":0},
-               "Grok 4.6":{"B001":1,"S004":1,"G002":2,"D001":2,"K005":2}, "Claude Opus 5":{"B001":1,"S004":0,"G002":2,"D001":1,"K005":0}}}
+    {
+      "link": "https://v.douyin.com/y2XnlzEwwRc/",
+      "title": "Fable5.1和GLM5.3 D组第一轮",
+      "bugs": [
+        "S005",
+        "G005",
+        "D004"
+      ],
+      "truth": {
+        "Fable 5.1": {
+          "S005": 1,
+          "G005": 2,
+          "D004": 3
+        },
+        "GLM-5.3": {
+          "S005": 1,
+          "G005": 2,
+          "D004": 2
+        },
+        "MiMo 2.5 Pro": {
+          "S005": 1,
+          "G005": 0,
+          "D004": 0
+        },
+        "Doubao Seed 2.1": {
+          "S005": 1,
+          "G005": 1,
+          "D004": 0
+        }
+      }
+    },
+    {
+      "link": "https://v.douyin.com/DMMOMDIFnso/",
+      "title": "中年K3大战青年Grok4.6",
+      "bugs": [
+        "S003",
+        "G003",
+        "D001"
+      ],
+      "truth": {
+        "Kimi K3": {
+          "S003": 1,
+          "G003": 0,
+          "D001": 2
+        },
+        "Grok 4.6": {
+          "S003": 1,
+          "G003": 2,
+          "D001": 2
+        },
+        "DeepSeek V4 Pro": {
+          "S003": 1,
+          "G003": 1,
+          "D001": 1
+        },
+        "Step 3.7 Flash": {
+          "S003": 1,
+          "G003": 0,
+          "D001": 0
+        }
+      }
+    },
+    {
+      "link": "https://v.douyin.com/APNAtxERAVQ/",
+      "title": "Flash大乱斗",
+      "bugs": [
+        "S002",
+        "G002",
+        "D002",
+        "K005"
+      ],
+      "truth": {
+        "GLM-5.3 Flash": {
+          "S002": 0,
+          "G002": 1,
+          "D002": 1,
+          "K005": 0
+        },
+        "DeepSeek V4 Flash": {
+          "S002": 1,
+          "G002": 1,
+          "D002": 1,
+          "K005": 0
+        },
+        "Qwen3.8 Flash": {
+          "S002": 1,
+          "G002": 2,
+          "D002": 2,
+          "K005": 0
+        },
+        "Gemini 3.7 Flash": {
+          "S002": 1,
+          "G002": 2,
+          "D002": 0,
+          "K005": 0
+        }
+      }
+    },
+    {
+      "link": "https://v.douyin.com/pmYNxOxzbVQ/",
+      "title": "SHI山B组第一轮 DeepSeek/Opus Gemini/Hy3.0",
+      "bugs": [
+        "S004",
+        "G003",
+        "D003"
+      ],
+      "truth": {
+        "Claude Opus 5": {
+          "S004": 1,
+          "G003": 2,
+          "D003": 3
+        },
+        "DeepSeek V4 Flash": {
+          "S004": 1,
+          "G003": 0,
+          "D003": 3
+        },
+        "Gemini 3.7 Flash": {
+          "S004": 1,
+          "G003": 2,
+          "D003": 0
+        },
+        "Hunyuan 3.0": {
+          "S004": 1,
+          "G003": 0,
+          "D003": 2
+        }
+      }
+    },
+    {
+      "link": "https://v.douyin.com/Y3bEB3CHKgA/",
+      "title": "MuseSpark1.2 秋季赛",
+      "bugs": [
+        "S002",
+        "G002",
+        "G003"
+      ],
+      "truth": {
+        "Muse Spark 1.2": {
+          "S002": 1,
+          "G002": 2,
+          "G003": 2
+        },
+        "Step 3.7 Flash": {
+          "S002": 1,
+          "G002": 0,
+          "G003": 2
+        },
+        "Hunyuan 3.0": {
+          "S002": 1,
+          "G002": 0,
+          "G003": 2
+        },
+        "Longcat 2.0": {
+          "S002": 0,
+          "G002": 0,
+          "G003": 0
+        },
+        "Doubao Seed 2.1": {
+          "S002": 0,
+          "G002": 0,
+          "G003": 0
+        }
+      }
+    },
+    {
+      "link": "https://v.douyin.com/VVuUgYnvpdE/",
+      "title": "开源闭源大决战",
+      "bugs": [
+        "B001",
+        "S004",
+        "G002",
+        "D001",
+        "K005"
+      ],
+      "truth": {
+        "DeepSeek V4 Pro": {
+          "B001": 1,
+          "S004": 0,
+          "G002": 1,
+          "D001": 1,
+          "K005": 2
+        },
+        "GLM-5.3": {
+          "B001": 1,
+          "S004": 1,
+          "G002": 2,
+          "D001": 1,
+          "K005": 0
+        },
+        "Kimi K3": {
+          "B001": 1,
+          "S004": 1,
+          "G002": 2,
+          "D001": 1,
+          "K005": 0
+        },
+        "Gemini 3.7 Flash": {
+          "B001": 1,
+          "S004": 1,
+          "G002": 2,
+          "D001": 0,
+          "K005": 0
+        },
+        "Grok 4.6": {
+          "B001": 1,
+          "S004": 1,
+          "G002": 2,
+          "D001": 2,
+          "K005": 2
+        },
+        "Claude Opus 5": {
+          "B001": 1,
+          "S004": 0,
+          "G002": 2,
+          "D001": 1,
+          "K005": 0
+        }
+      }
+    }
   ]
 }
