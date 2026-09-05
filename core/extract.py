@@ -48,7 +48,7 @@ def prompt_hash() -> str:
     return h.hexdigest()[:12]
 
 
-def _build_prompt(transcript: str) -> str:
+def _build_prompt(transcript: str, title: str = "") -> str:
     models = _load_models()
     model_list = "\n".join(f"- {k}" for k in models)
     alias_table = "\n".join(
@@ -56,6 +56,7 @@ def _build_prompt(transcript: str) -> str:
     tpl = _prompt_template()
     return (tpl.replace("{MODEL_LIST}", model_list)
                .replace("{ALIAS_TABLE}", alias_table)
+               .replace("{TITLE}", title or "（无标题）")
                .replace("{TRANSCRIPT}", transcript))
 
 
@@ -189,7 +190,7 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
     """把 LLM 输出组装为 extract 对象并做全部校验；不写库。校验失败抛 ExtractError。"""
     models = _load_models()
     if claude_text is None:
-        claude_text = _call_llm(_build_prompt(transcript))
+        claude_text = _call_llm(_build_prompt(transcript, title))
     raw_records = _parse_records_json(claude_text)
 
     norm_tx = _normalize_quote(transcript)

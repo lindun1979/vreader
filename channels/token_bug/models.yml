@@ -95,7 +95,7 @@ Claude Opus 5:
   - opus 5.0
   - opus
   - 克劳德 opus
-Claude Opus 4.8:
+  # 博主标题常把 5.0 写成 4.8（真值标注统一为 Opus 5），故并入
   - claude opus 4.8
   - opus 4.8
   - opus4.8
