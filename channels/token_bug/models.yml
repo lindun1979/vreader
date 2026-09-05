@@ -19,6 +19,16 @@ DeepSeek V4:
   - deepseek v4
   - deepseekv4
   - 深度求索 v4
+DeepSeek V4 Pro:
+  - deepseek v4 pro
+  - deepseekv4pro
+  - v4pro
+  - v4 pro
+  - 4pro
+  - pro
+DSH:
+  - dsh
+  - deepseek dsh
 DeepSeek V4 Flash:
   - deepseek v4 flash
   - deepseekv4flash
@@ -58,6 +68,10 @@ Claude Opus 5:
   - opus 5
   - opus
   - 克劳德 opus
+Claude Opus 4.8:
+  - claude opus 4.8
+  - opus 4.8
+  - opus4.8
 Claude Opus 4.5:
   - claude opus 4.5
   - opus 4.5
