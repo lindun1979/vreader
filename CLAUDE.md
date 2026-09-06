@@ -10,9 +10,10 @@
 - 入口：飞书（复用 life-assistant 飞书号，skill_router HMAC 透传到本服务 127.0.0.1:8232）。
 - 管线：解析 aweme_id → 下载 → ffmpeg wav → SenseVoice(分块) → LLM 提取 → 决策 → board.md。
 - 下载：**不用 yt-dlp**（Douyin extractor 漏参已坏），直连 web detail API + 匿名 ttwid。
-- 提取 LLM：生产机 :8317 cliproxy 的 **gemini-2.5-flash**（主，91% 准；40 rpd），
-  兜底 gemini-3.5-flash-lite（Gladia 转写下 gold 97 格 86.6%）；配 LLM_MODEL/LLM_MODEL_FALLBACK。得分驱动
-  （LLM 只提 score，代码反推 solved/rounds）。标题作对战名单提召回。
+- 提取 LLM：生产机 **agy（Antigravity CLI）gemini-3.7-flash-medium 主**（生产链路 gold 97 格
+  96/97≈99%；LLM_BACKEND=agy，直连不通须配 AGY_PROXY 代理，见 [[agy-on-prod-via-proxy]]），
+  兜底 :8317 cliproxy 的 gemini-3.5-flash-lite（gold 86.6%）；配 LLM_MODEL/LLM_MODEL_FALLBACK。
+  得分驱动（LLM 只提 score，代码反推 solved/rounds）。标题作对战名单提召回。
 - ASR：**Gladia 云转写主**（gold 97 格 100% vs SenseVoice 89.7%，~11s/条，带 models.yml
   热词；GLADIA_API_KEY 配 .env，免费 10h/月），失败自动回落本地 SenseVoiceSmall（CPU）。
   SenseVoice 长视频**必须分块**转写（整段喂入峰值 10GB+ 拖垮 16G 机）。

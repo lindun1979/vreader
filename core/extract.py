@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 import time
@@ -94,25 +95,64 @@ def _record_id(aweme_id: str, r: dict) -> str:
     return hashlib.sha256(key.encode()).hexdigest()[:16]
 
 
+def _providers() -> list[tuple[str, str | None]]:
+    """按后端返回 (transport, model) 尝试链（主在前，兜底在后）。
+    agy 后端：LLM_MODEL 走 agy 主通道，LLM_MODEL_FALLBACK 走 :8317 兜底。"""
+    if config.LLM_BACKEND == "claude":
+        return [("claude", None)]
+    if config.LLM_BACKEND == "agy":
+        return [("agy", config.LLM_MODEL),
+                *[("openai", m) for m in config.LLM_MODEL_FALLBACK]]
+    return [("openai", m) for m in [config.LLM_MODEL, *config.LLM_MODEL_FALLBACK]]
+
+
+def _dispatch(transport: str, model: str | None, prompt: str, *, timeout: int) -> str:
+    if transport == "agy":
+        return _call_agy(prompt, timeout=timeout, model=model)
+    if transport == "claude":
+        return _call_claude(prompt, timeout=timeout)
+    return _call_openai(prompt, timeout=timeout, model=model)
+
+
 def _call_llm(prompt: str, *, timeout: int | None = None) -> str:
     timeout = timeout or config.LLM_TIMEOUT
-    if config.LLM_BACKEND == "claude":
-        return _call_claude(prompt, timeout=timeout)
-    # 主模型 + 兜底链；每个模型重试一次（偶发超时/空返回/授权不可用）
+    # 主通道 + 兜底链；每个尝试重试一次（偶发超时/空返回/授权不可用）
     last: Exception | None = None
-    for model in [config.LLM_MODEL, *config.LLM_MODEL_FALLBACK]:
+    for transport, model in _providers():
         for _ in range(2):
             try:
-                out = _call_openai(prompt, timeout=timeout, model=model)
+                out = _dispatch(transport, model, prompt, timeout=timeout)
                 if out.strip():
                     return out
                 last = ExtractError("LLM 返回空")
             except ExtractError as e:
                 last = e
-                # 授权不可用/服务不可用 → 直接切下一个模型
+                # 授权不可用/服务不可用 → 直接切下一个通道
                 if any(s in str(e) for s in ("auth_unavailable", "503", "unavailable")):
                     break
     raise last or ExtractError("LLM 调用失败")
+
+
+def _call_agy(prompt: str, *, timeout: int = 300, model: str | None = None) -> str:
+    """调 agy（Antigravity CLI）print 模式，返回模型文本。生产直连不通，按
+    config.AGY_PROXY 注入 HTTP 代理 env（agy 是 Go 二进制，认标准 HTTPS_PROXY）。"""
+    env = dict(os.environ)
+    if config.AGY_PROXY:
+        env["HTTPS_PROXY"] = config.AGY_PROXY
+        env["HTTP_PROXY"] = config.AGY_PROXY
+        env.setdefault("NO_PROXY", "127.0.0.1,localhost")
+    cmd = [config.AGY_BIN, "-p", prompt, "--model", model or config.LLM_MODEL,
+           "--print-timeout", f"{timeout}s"]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=timeout + 30, env=env)
+    except FileNotFoundError as e:
+        raise ExtractError(f"agy CLI 未找到: {config.AGY_BIN}") from e
+    except subprocess.TimeoutExpired as e:
+        raise ExtractError("agy CLI 超时") from e
+    if proc.returncode != 0:
+        raise ExtractError(f"agy CLI 退出码 {proc.returncode}: {proc.stderr[:300]}")
+    return proc.stdout or ""
 
 
 def _call_openai(prompt: str, *, timeout: int = 300, model: str | None = None) -> str:
