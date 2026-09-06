@@ -93,6 +93,9 @@ def process_task(conn, task) -> str:
         msg = (f"✅ 已处理：{meta['title'][:30]}\n"
                f"提取 {n_rec} 条记录（自动上榜 {counts['auto_ok']}，"
                f"待确认 {counts['pending']}）")
+        # Gladia 配了却没用上 = 静默降级，回执里显式可见（额度/网络问题别只躺日志）
+        if config.GLADIA_API_KEY and ex.get("asr_model") != "gladia-v2":
+            msg += f"\n⚠️ ASR 走了兜底 {ex.get('asr_model')}（Gladia 未生效，查额度/err.log）"
         _enqueue_and_status(conn, aweme_id, db.SUCCEEDED, chat_id, msg)
         _cleanup_media(p)
         return db.SUCCEEDED
