@@ -1,0 +1,29 @@
+跨仓改动：life-assistant/n8n/skill_router.py（vreader 透传分支）
+目的：让飞书能把「vr明细 <id>」和带第二参数的「vr确认 <id> <记录码>」正确转发给 vreader。
+影响面：仅 vreader 专属的 _VREADER_* 正则与 _vreader_classify（vreader 独有函数），
+        不碰任何其他技能的路由；未命中 vreader 意图时照旧返回 None。
+
+--- a/n8n/skill_router.py
++++ b/n8n/skill_router.py
+@@ vreader 透传：正则定义
+ _VREADER_DOUYIN = _re.compile(r'(v\.douyin\.com/|douyin\.com/(?:video|note)/|iesdouyin\.com/)')
+ _VREADER_BOARD = _re.compile(r'^\s*(?:/vreader\s+榜单|vr榜单)\s*$')
+-_VREADER_CONFIRM = _re.compile(r'^\s*(?:/vreader\s+确认|vr确认)\s+(\S+)\s*$')
++_VREADER_DETAIL = _re.compile(r'^\s*(?:/vreader\s+明细|vr明细)\s+\S+\s*$')
++# 放宽：确认命令允许可选第二参数（逐条确认冲突记录的“记录码”，或 rev:<版本>）
++_VREADER_CONFIRM = _re.compile(r'^\s*(?:/vreader\s+确认|vr确认)\s+\S+(?:\s+\S+)?\s*$')
+
+@@ def _vreader_classify(text):
+     t = text or ""
+     if _VREADER_CONFIRM.match(t):
+         return "/confirm"
++    if _VREADER_DETAIL.match(t):
++        return "/detail"
+     if _VREADER_BOARD.match(t):
+         return "/board"
+     if _VREADER_DOUYIN.search(t):
+         return "/ingest"
+     return None
+
+说明：_vreader_forward 无需改动——它本就把整条 text 原样转发给 vreader，
+参数解析在 vreader 端（core/routing.parse_confirm / parse_detail）完成。
