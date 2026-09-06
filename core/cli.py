@@ -40,6 +40,12 @@ def main(argv: list[str]) -> int:
         return 3
     conn = _db()
     try:
+        if argv[0] == "--reprocess":
+            if len(argv) < 2:
+                print("用法：--reprocess <aweme_id>", file=sys.stderr)
+                return 1
+            print(pipeline.reprocess(conn, argv[1]))
+            return 0
         from . import douyin
         text = argv[0]
         aweme_id = douyin.resolve_aweme_id(text)

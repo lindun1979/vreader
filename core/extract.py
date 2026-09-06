@@ -358,6 +358,7 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
         "dropped_count": len(dropped),
         "dropped": dropped,
     }
+    extract["result_rev"] = result_rev(aweme_id, records)
     # 空 records 不再当失败重试（agy M-02/cf5#11）：显式 no_content 终态成功；
     # dropped 明细落盘供人工审计（dup≠dropped：dup 是重复合并，dropped 是校验丢弃）。
     if not records:
@@ -428,6 +429,8 @@ def apply_decisions(conn, aweme_id: str, extract: dict) -> dict:
     conflict = _conflict_rids(aweme_id, by_rid)
     counts: dict[str, int] = {}
     keep_ids = set(by_rid)
+    # 规则5：曾 approved 但本次缺失的记录会被 stale，单独计数用于 ⚠️ 提示
+    before = {row["record_id"]: row["decision"] for row in db.list_decisions_for_video(conn, aweme_id)}
     for rid, r in by_rid.items():
         prev = db.get_decision(conn, rid)
         if prev and prev["decision"] in db.PERSISTENT_DECISIONS:
@@ -439,6 +442,8 @@ def apply_decisions(conn, aweme_id: str, extract: dict) -> dict:
         counts[decision] = counts.get(decision, 0) + 1
     counts["stale"] = db.mark_stale(conn, aweme_id, keep_ids, commit=False)
     conn.commit()
+    counts["approved_stale"] = sum(
+        1 for rid, dec in before.items() if dec == db.APPROVED and rid not in keep_ids)
     # 便捷别名：pending 汇总（三态之和），供回执文案
     counts["dup"] = dup
     counts.setdefault("auto_ok", 0)
@@ -449,3 +454,79 @@ def apply_decisions(conn, aweme_id: str, extract: dict) -> dict:
 
 def record_id(aweme_id: str, r: dict) -> str:  # 供测试/board 用
     return _record_id(aweme_id, r)
+
+
+def result_rev(aweme_id: str, records: list[dict]) -> str:
+    """本次结果版本 = 全部 rid 排序后的哈希（C9）；确认命令绑此版本防错认旧内容。"""
+    ids = sorted(_record_id(aweme_id, r) for r in records)
+    return hashlib.sha256("|".join(ids).encode()).hexdigest()[:12]
+
+
+def confirm_conflict_member(conn, aweme_id: str, rid: str, approver: str) -> tuple[bool, str]:
+    """逐条确认冲突组成员（规则4/C2.4）：确认该成员 APPROVED，同组其余未裁决成员置
+    rejected_conflict（同事务）。组内已有 APPROVED → 拒绝（反向改判走 3-15）。
+    rid 可为完整 16 位或 ≥6 位前缀。返回 (成功?, 文案)。"""
+    p = _paths_extract(aweme_id)
+    if p is None:
+        return False, f"找不到该视频的提取结果（{aweme_id}）"
+    ex = json.loads(Path(p).read_text(encoding="utf-8"))
+    by_rid, _ = _dedup_records(aweme_id, ex.get("records", []))
+    matches = [x for x in by_rid if x == rid or x.startswith(rid)]
+    if not matches:
+        return False, f"没有匹配 {rid} 的记录"
+    if len(matches) > 1:
+        return False, f"{rid} 前缀不唯一，请多给几位"
+    target = matches[0]
+    ak = _attempt_key(aweme_id, by_rid[target])
+    group = [x for x in by_rid if _attempt_key(aweme_id, by_rid[x]) == ak]
+    for g in group:  # 组内已有 APPROVED → 一律拒绝再确认
+        d = db.get_decision(conn, g)
+        if d and d["decision"] == db.APPROVED:
+            return False, "该冲突组已有裁决，不能再确认（反向改判待实现 vr改判）"
+    import time as _t
+    db.upsert_decision(conn, record_id=target, aweme_id=aweme_id, decision=db.APPROVED,
+                       extractor_version=ex.get("extractor_version", ""),
+                       prompt_hash=ex.get("prompt_hash", ""),
+                       approved_by=approver, approved_at=_t.time(), commit=False)
+    for g in group:
+        if g == target:
+            continue
+        d = db.get_decision(conn, g)
+        if not d or d["decision"] not in db.PERSISTENT_DECISIONS:
+            db.upsert_decision(conn, record_id=g, aweme_id=aweme_id,
+                               decision=db.REJECTED_CONFLICT,
+                               extractor_version=ex.get("extractor_version", ""),
+                               prompt_hash=ex.get("prompt_hash", ""), commit=False)
+    conn.commit()
+    return True, f"已确认该冲突成员入榜，同组其余 {len(group) - 1} 条标记为落败。"
+
+
+def _paths_extract(aweme_id: str) -> str | None:
+    p = config.video_dir("token_bug", aweme_id) / "extract.json"
+    return str(p) if p.exists() else None
+
+
+_DECISION_LABEL = {
+    db.AUTO_OK: "已上榜", db.APPROVED: "已确认上榜", db.PENDING: "待确认",
+    db.PENDING_UNKNOWN: "待确认(模型未知)", db.PENDING_CONFLICT: "待确认(矛盾)",
+    db.REJECTED_CONFLICT: "冲突落败", db.STALE: "已过期", db.EXPIRED: "已过期",
+}
+
+
+def detail_view(conn, aweme_id: str) -> str:
+    """/detail：视频提取明细（含 rid 短码/decision/完整证据），供人工审阅与逐条确认。"""
+    p = _paths_extract(aweme_id)
+    if p is None:
+        return f"找不到该视频的提取结果（{aweme_id}）。"
+    ex = json.loads(Path(p).read_text(encoding="utf-8"))
+    by_rid, _ = _dedup_records(aweme_id, ex.get("records", []))
+    lines = [f"📋 {aweme_id} 明细（result_rev={ex.get('result_rev', '?')}）"]
+    if not by_rid:
+        lines.append("（无有效记录）")
+    for rid, r in by_rid.items():
+        d = db.get_decision(conn, rid)
+        label = _DECISION_LABEL.get(d["decision"], d["decision"]) if d else "?"
+        lines.append(
+            f"[{rid[:8]}] {r['model_canonical']} · {r['bug_level']} · score={r.get('score')} · "
+            f"conf={r.get('confidence')} → {label}\n    证据：{r.get('evidence_quote', '')}")
+    return "\n".join(lines)

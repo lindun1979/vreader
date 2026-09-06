@@ -34,8 +34,11 @@ REJECTED_CONFLICT = "rejected_conflict"  # 冲突组落败方：裁决恒存
 EXPIRED = "expired"
 STALE = "stale"
 BOARD_VISIBLE = (AUTO_OK, APPROVED)
-# 裁决恒存（不被 mark_stale 覆盖、凭指纹继承）：人工批准与冲突拒绝
+# 凭指纹继承（apply_decisions 遇到旧裁决不重判）：人工批准与冲突拒绝
 PERSISTENT_DECISIONS = (APPROVED, REJECTED_CONFLICT)
+# mark_stale 豁免（缺失也不置 stale）：仅 rejected_conflict（裁决恒存，消除"stale 抹拒绝
+# 再现重开"反例）。APPROVED 缺失仍照常 stale（规则5，带 ⚠️ 单独计数提示）。
+STALE_EXEMPT = (REJECTED_CONFLICT,)
 PENDING_KINDS = (PENDING, PENDING_UNKNOWN, PENDING_CONFLICT)
 
 _SCHEMA = """
@@ -297,13 +300,18 @@ def mark_stale(conn: sqlite3.Connection, aweme_id: str, keep_ids: set[str],
         "SELECT record_id, decision FROM record_decisions WHERE aweme_id=?", (aweme_id,)).fetchall()
     n = 0
     for r in rows:
-        if r["record_id"] not in keep_ids and r["decision"] not in PERSISTENT_DECISIONS:
+        if r["record_id"] not in keep_ids and r["decision"] not in STALE_EXEMPT:
             conn.execute("UPDATE record_decisions SET decision=? WHERE record_id=?",
                          (STALE, r["record_id"]))
             n += 1
     if commit:
         conn.commit()
     return n
+
+
+def list_decisions_for_video(conn: sqlite3.Connection, aweme_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT record_id, decision FROM record_decisions WHERE aweme_id=?", (aweme_id,)).fetchall()
 
 
 def approve_pending_for_video(conn: sqlite3.Connection, aweme_id: str, approver: str) -> int:

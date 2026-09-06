@@ -105,13 +105,19 @@ def _finish(conn, aweme_id: str, chat_id: str, ex: dict, p: dict) -> str:
         db.set_status(conn, aweme_id, db.RENDERING)
         render_board(conn)
     title = (ex.get("title") or "")[:30]
+    rev = ex.get("result_rev", "?")
     if ex.get("no_content"):
-        msg = (f"ℹ️ 已处理：{title}\n"
+        msg = (f"ℹ️ 已处理：{title}（{aweme_id}）\n"
                f"未发现可提取的模型对战内容（丢弃 {ex.get('dropped_count', 0)} 条不合规记录）。")
     else:
-        msg = (f"✅ 已处理：{title}\n"
+        msg = (f"✅ 已处理：{title}（{aweme_id}，rev {rev}）\n"
                f"提取 {len(ex['records'])} 条记录（自动上榜 {counts['auto_ok']}，"
                f"待确认 {counts['pending']}）")
+        if counts["pending"]:
+            msg += (f"\n👉 查看明细：vr明细 {aweme_id}"
+                    f"\n👉 批量确认：vr确认 {aweme_id}")
+    if counts.get("approved_stale"):
+        msg += f"\n⚠️ {counts['approved_stale']} 条此前已确认的记录本次消失（已下榜）。"
     if config.GLADIA_API_KEY and ex.get("asr_model") != "gladia-v2":
         msg += f"\n⚠️ ASR 走了兜底 {ex.get('asr_model')}（Gladia 未生效，查额度/err.log）"
     db.finalize_task(conn, aweme_id, db.SUCCEEDED, chat_id=chat_id, content=msg)
@@ -172,6 +178,24 @@ def process_task(conn, task) -> str:
         if status == db.TERMINAL_FAILED:
             _cleanup_media(p)
         return status
+
+
+def reprocess(conn, aweme_id: str) -> str:
+    """2g：用现有 transcript 以当前 prompt/别名表重跑提取+决策+渲染（不重开裁决——
+    apply_decisions 凭指纹继承 approved/rejected_conflict）。需先取数据目录 flock（调用方）。"""
+    p = _paths(aweme_id)
+    transcript = _read_if_present(p["transcript"])
+    if transcript is None:
+        raise extract_mod.ExtractError(f"无 transcript，无法重跑：{aweme_id}")
+    task = db.get_task(conn, aweme_id)
+    title = (task["title"] if task else "") or ""
+    ex = extract_mod.build_extract(aweme_id=aweme_id, title=title, transcript=transcript)
+    util.atomic_write_text(p["extract"], json.dumps(ex, ensure_ascii=False, indent=2))
+    with lock.publish_lock:
+        counts = extract_mod.apply_decisions(conn, aweme_id, ex)
+        render_board(conn)
+    return (f"reprocess {aweme_id}: auto_ok={counts['auto_ok']} pending={counts['pending']} "
+            f"rev={ex.get('result_rev')}")
 
 
 class _Terminal(Exception):

@@ -141,21 +141,53 @@ def handle_board(conn, payload: dict) -> tuple[int, str]:
     return 200, md
 
 
+def _current_result_rev(aweme_id: str) -> str | None:
+    from . import extract as ex_mod
+    p = ex_mod._paths_extract(aweme_id)
+    if p is None:
+        return None
+    try:
+        return json.loads(open(p, encoding="utf-8").read()).get("result_rev")
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def handle_confirm(conn, payload: dict) -> tuple[int, str]:
     sender_id = payload.get("sender_id") or ""
     if not config.ADMIN_SENDER_ID or sender_id != config.ADMIN_SENDER_ID:
         return 200, "无权确认（仅管理员）。"
-    text = (payload.get("text") or "").strip()
-    parts = text.split()
-    video_id = parts[-1] if parts else ""
+    from . import extract as ex_mod, lock, routing
+    video_id, arg = routing.parse_confirm(payload.get("text") or "")
     if not video_id:
-        return 200, "用法：vr确认 <video_id>"
-    from . import lock
-    with lock.publish_lock:  # C8 publish_confirm：批准与渲染对 worker 原子
+        return 200, "用法：vr确认 <video_id> [<记录码>|rev:<版本>]"
+    with lock.publish_lock:  # C8 publish_confirm：批准与渲染对 worker 原子（锁内一致快照）
+        # 逐条确认冲突组成员（arg 为 rid 短码）
+        if arg and not arg.startswith("rev:"):
+            ok, msg = ex_mod.confirm_conflict_member(conn, video_id, arg, sender_id)
+            if ok:
+                pipeline.render_board(conn)
+            return 200, msg
+        # 绑版本批量确认（arg = rev:<版本>）：版本不符拒绝，防确认过时内容
+        if arg and arg.startswith("rev:"):
+            want = arg[4:]
+            cur = _current_result_rev(video_id)
+            if cur and want != cur:
+                return 200, f"内容已更新（当前版本 {cur}，你确认的是 {want}）。请先 vr明细 {video_id} 重新查看。"
         n = db.approve_pending_for_video(conn, video_id, sender_id)
         if n:
             pipeline.render_board(conn)
-    return 200, f"已确认 {n} 条待确认记录入榜（{video_id}）。" if n else f"没有可确认的待确认记录（{video_id}）。"
+    if not n:
+        return 200, f"没有可批量确认的待确认记录（{video_id}）。冲突/未知项需 vr明细 后逐条确认。"
+    return 200, f"已确认 {n} 条待确认记录入榜（{video_id}）。"
+
+
+def handle_detail(conn, payload: dict) -> tuple[int, str]:
+    from . import extract as ex_mod, lock, routing
+    video_id = routing.parse_detail(payload.get("text") or "")
+    if not video_id:
+        return 200, "用法：vr明细 <video_id>"
+    with lock.publish_lock:  # C8：锁内一致快照
+        return 200, ex_mod.detail_view(conn, video_id)
 
 
 def _thread_state(hs: dict, who: str, now: float) -> tuple[bool, str]:
@@ -217,6 +249,7 @@ def handle_healthz(conn, payload: dict) -> tuple[int, str]:
 _ROUTES = {
     "/ingest": handle_ingest,
     "/board": handle_board,
+    "/detail": handle_detail,
     "/confirm": handle_confirm,
     "/healthz": handle_healthz,
 }
