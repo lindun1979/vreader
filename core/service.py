@@ -227,6 +227,10 @@ def handle_healthz(conn, payload: dict) -> tuple[int, str]:
         reasons.append(f"low_disk:{free_gb:.1f}GB")
     if hs.get("paused_asr_orphan"):
         reasons.append("paused_asr_orphan")
+    from . import asr  # 懒加载不触发 funasr（顶层无 import funasr）
+    asr_since = getattr(asr, "_asr_started_at", None)
+    if asr_since and (now - asr_since) > config.ASR_STUCK_S:
+        reasons.append(f"asr_stuck:{int(now - asr_since)}s")  # in-process funasr 疑似卡死
 
     ok = not reasons
     health = {

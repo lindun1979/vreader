@@ -77,6 +77,9 @@ OUTBOX_STALE_S = 3600          # 最老未送达通知 > 此值 → 不健康
 HEALTH_STALE_BEAT_S = 90       # 线程心跳超此未更新且非在执行 → 视为线程死
 # ingest ACK 预算（C4/2h）：短链 resolve 的 socket 超时上限，卡住即快速失败
 ACK_RESOLVE_TIMEOUT_S = float(get("VREADER_ACK_RESOLVE_TIMEOUT_S", "2.0"))
+# 本地 ASR 运行超此时长 → healthz 判卡死告警（in-process funasr 无法被 timeout 中断，
+# 靠此可观测；正常单块转写远小于此）。默认 2×ASR 阶段上限。
+ASR_STUCK_S = int(get("VREADER_ASR_STUCK_S", str(ASR_TIMEOUT_S * 2)))
 
 
 def channel_dir(channel: str) -> Path:

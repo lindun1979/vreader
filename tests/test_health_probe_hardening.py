@@ -84,3 +84,25 @@ def test_asr_orphan_paused_503(conn):
     code, body = service.handle_healthz(conn, {})
     h = json.loads(body)
     assert code == 503 and "paused_asr_orphan" in h["reasons"]
+
+
+def test_asr_stuck_detected(conn, monkeypatch):
+    """本地 ASR 运行超阈值 → healthz 报 asr_stuck（in-process funasr 卡死可观测）。"""
+    import time as _t
+    from core import asr, config
+    _reset_health()
+    _healthy_beat(_t.time())
+    monkeypatch.setattr(asr, "_asr_started_at", _t.time() - config.ASR_STUCK_S - 100)
+    code, body = service.handle_healthz(conn, {})
+    h = json.loads(body)
+    assert code == 503 and any("asr_stuck" in r for r in h["reasons"])
+
+
+def test_asr_normal_not_flagged(conn, monkeypatch):
+    import time as _t
+    from core import asr
+    _reset_health()
+    _healthy_beat(_t.time())
+    monkeypatch.setattr(asr, "_asr_started_at", _t.time() - 5)  # 刚开始转写
+    code, body = service.handle_healthz(conn, {})
+    assert code == 200

@@ -20,6 +20,10 @@ _GLADIA_MODEL_ID = "gladia-v2"
 _SV_MODEL_ID = "SenseVoiceSmall"
 _model = None
 _last_engine = _SV_MODEL_ID  # 最近一次实际转写用的引擎（worker 串行，全局即可）
+# 本地 SenseVoice 转写起始时间（None=未在转写）。funasr 是进程内 C 调用、无法被
+# subprocess timeout 中断——用它让 healthz 观测到卡死（C10 在 in-process 模型下的
+# 落地：flock 已防内存叠加，此处补「卡死可观测+告警」，自动清理仍靠 flock+人工 kill）。
+_asr_started_at: float | None = None
 
 
 def model_id() -> str:
@@ -192,7 +196,12 @@ def video_to_transcript(video_path: str, wav_path: str, transcript_path: str) ->
             print(f"[asr] Gladia 失败，回落 SenseVoice: {e}", file=sys.stderr, flush=True)
     if text is None:
         extract_wav(video_path, wav_path)
-        text = transcribe(wav_path)
+        global _asr_started_at
+        _asr_started_at = time.time()  # 登记本地转写起始（healthz 据此观测卡死）
+        try:
+            text = transcribe(wav_path)
+        finally:
+            _asr_started_at = None
         _last_engine = _SV_MODEL_ID
     Path(transcript_path).parent.mkdir(parents=True, exist_ok=True)
     Path(transcript_path).write_text(text, encoding="utf-8")
