@@ -34,14 +34,16 @@ def render(extracts: list[dict], visible_ids, record_id_fn) -> str:
     # 汇总 (model, level) -> attempts；model -> 总分
     grid: dict[tuple[str, str], list[dict]] = {}
     per_model: dict[str, list[dict]] = {}
+    seen: set[str] = set()  # 规则7 渲染防御：同 rid 只计一次（防双计）
     n_videos = 0
     for ex in extracts:
         n_videos += 1
         aid = ex["video_id"]
         for r in ex["records"]:
             rid = record_id_fn(aid, r)
-            if rid not in visible_ids:
+            if rid not in visible_ids or rid in seen:
                 continue
+            seen.add(rid)
             mc = r["model_canonical"]
             if mc == "UNKNOWN":
                 continue

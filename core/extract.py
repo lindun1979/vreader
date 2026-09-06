@@ -88,11 +88,49 @@ def derive_solved_rounds(level: str, score: int) -> tuple[bool, int | None]:
     return (True, maxs - score + 1)
 
 
+# bug_id 首字母 → 等级映射（一致性校验；未知前缀不判冲突，避免误伤新命名）
+_PREFIX_LEVEL = {"B": "青铜", "S": "白银", "G": "黄金", "D": "钻石", "K": "王者", "W": "王者"}
+
+
+def _bug_norm(r: dict) -> str:
+    return (r.get("bug_id", "") or "").strip().upper()
+
+
+def _model_key(r: dict) -> str:
+    """未知模型用 raw 归一区分，避免不同未知模型误合并同一 rid（C2）。"""
+    mc = r.get("model_canonical", "")
+    if mc == "UNKNOWN":
+        return "UNKNOWN:" + _normalize_quote(r.get("model_raw", ""))
+    return mc
+
+
+def _bug_slot(r: dict) -> str:
+    """空 bug_id 用 evidence 指纹占位，避免空 bug_id 相互碰撞合并（C2）。"""
+    bn = _bug_norm(r)
+    if bn:
+        return bn
+    return "e:" + hashlib.sha256(_normalize_quote(r.get("evidence_quote", "")).encode()).hexdigest()[:8]
+
+
+def _attempt_key(aweme_id: str, r: dict) -> str:
+    """同一次对战尝试的键（不含 score）：同 attempt 出现不同 score = 矛盾组。"""
+    return f"{aweme_id}|{_model_key(r)}|{r['bug_level']}|{_bug_slot(r)}"
+
+
 def _record_id(aweme_id: str, r: dict) -> str:
-    # 含 bug_id 区分同级不同 bug；含 score（编码 solved+rounds）；不含 confidence。
-    key = (f"{aweme_id}|{r['model_canonical']}|{r['bug_level']}|{r.get('bug_id','')}"
-           f"|{r.get('score')}")
+    # 身份 = attempt_key + score（编码 solved/rounds）；不含 confidence；顺序无关。
+    key = f"{_attempt_key(aweme_id, r)}|{r.get('score')}"
     return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
+def _bug_prefix_conflict(r: dict) -> bool:
+    """bug_id 已知前缀却指向别的等级（如 G005 标成钻石）→ 冲突（降 pending）。
+    未知前缀不判冲突（可能是新命名规则）。"""
+    bn = _bug_norm(r)
+    if not bn:
+        return False
+    mapped = _PREFIX_LEVEL.get(bn[0])
+    return mapped is not None and mapped != r.get("bug_level")
 
 
 def _providers() -> list[tuple[str, str | None]]:
@@ -339,28 +377,73 @@ def _asr_model_id() -> str:
         return "SenseVoiceSmall"
 
 
-def apply_decisions(conn, aweme_id: str, extract: dict) -> dict:
-    """按本次 extract 重判 auto_ok/pending（auto_ok 永不沿用），继承 approved，
-    消失记录置 stale。返回 {auto_ok, pending, approved_kept, stale} 计数。"""
-    ev, ph = extract["extractor_version"], extract["prompt_hash"]
-    keep_ids: set[str] = set()
-    counts = {"auto_ok": 0, "pending": 0, "approved_kept": 0}
-    for r in extract["records"]:
+def _dedup_records(aweme_id: str, records: list[dict]) -> tuple[dict[str, dict], int]:
+    """规则1 完全重复（同 rid）：留 confidence 最高，其余计 dup。顺序无关。
+    返回 (rid→record, dup_count)。"""
+    by_rid: dict[str, dict] = {}
+    dup = 0
+    for r in records:
         rid = _record_id(aweme_id, r)
-        keep_ids.add(rid)
+        if rid not in by_rid:
+            by_rid[rid] = r
+        else:
+            dup += 1
+            if r.get("confidence", 0) > by_rid[rid].get("confidence", 0):
+                by_rid[rid] = r
+    return by_rid, dup
+
+
+def _conflict_rids(aweme_id: str, by_rid: dict[str, dict]) -> set[str]:
+    """规则2 矛盾组：同 attempt_key 出现多个不同 score（rid 不同）→ 全组成员冲突。"""
+    groups: dict[str, list[str]] = {}
+    for rid, r in by_rid.items():
+        groups.setdefault(_attempt_key(aweme_id, r), []).append(rid)
+    out: set[str] = set()
+    for members in groups.values():
+        if len(members) > 1:
+            out.update(members)
+    return out
+
+
+def _classify(r: dict, is_conflict: bool) -> str:
+    """新记录的初始决策（裁决恒存的不走此处）。"""
+    if is_conflict:
+        return db.PENDING_CONFLICT
+    if r.get("model_canonical") == "UNKNOWN":
+        return db.PENDING_UNKNOWN                 # 2c' 模型未知 → 待补别名表
+    if not _bug_norm(r):
+        return db.PENDING                          # 规则6 空 bug_id 一律不 auto_ok
+    if _bug_prefix_conflict(r):
+        return db.PENDING                          # 2c' bug_id 前缀与等级不一致 → 降级
+    if r.get("confidence", 0) >= config.CONFIDENCE_THRESHOLD:
+        return db.AUTO_OK
+    return db.PENDING
+
+
+def apply_decisions(conn, aweme_id: str, extract: dict) -> dict:
+    """归并七规则重判决策（C2）。auto_ok/pending 每次按本次重算；APPROVED 与
+    rejected_conflict 凭指纹继承（裁决恒存，规则3）；消失记录置 stale（跳过裁决）。"""
+    ev, ph = extract["extractor_version"], extract["prompt_hash"]
+    by_rid, dup = _dedup_records(aweme_id, extract["records"])
+    conflict = _conflict_rids(aweme_id, by_rid)
+    counts: dict[str, int] = {}
+    keep_ids = set(by_rid)
+    for rid, r in by_rid.items():
         prev = db.get_decision(conn, rid)
-        if prev and prev["decision"] == db.APPROVED:
-            counts["approved_kept"] += 1  # 仅 approved 凭指纹继承，不动
+        if prev and prev["decision"] in db.PERSISTENT_DECISIONS:
+            counts[prev["decision"]] = counts.get(prev["decision"], 0) + 1  # 恒存继承
             continue
-        # auto_ok/pending 每次按本次 confidence 重新判定
-        ok = r.get("confidence", 0) >= config.CONFIDENCE_THRESHOLD
-        decision = db.AUTO_OK if ok else db.PENDING
+        decision = _classify(r, rid in conflict)
         db.upsert_decision(conn, record_id=rid, aweme_id=aweme_id, decision=decision,
                            extractor_version=ev, prompt_hash=ph, commit=False)
-        counts[decision] += 1
-    stale = db.mark_stale(conn, aweme_id, keep_ids)  # 含 commit
+        counts[decision] = counts.get(decision, 0) + 1
+    counts["stale"] = db.mark_stale(conn, aweme_id, keep_ids, commit=False)
     conn.commit()
-    counts["stale"] = stale
+    # 便捷别名：pending 汇总（三态之和），供回执文案
+    counts["dup"] = dup
+    counts.setdefault("auto_ok", 0)
+    counts["pending"] = (counts.get(db.PENDING, 0) + counts.get(db.PENDING_UNKNOWN, 0)
+                         + counts.get(db.PENDING_CONFLICT, 0))
     return counts
 
 

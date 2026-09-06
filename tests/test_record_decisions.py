@@ -3,8 +3,13 @@ from core import db, extract as ex_mod
 from channels.token_bug import board
 
 
-def _rec(model, level, solved, rounds, conf, quote="十个字以上的证据片段内容"):
+# 各等级一个匹配前缀的 bug_id（空 bug_id 会被规则6 强制 pending）
+_LEVEL_BUG = {"青铜": "B001", "白银": "S001", "黄金": "G001", "钻石": "D001", "王者": "K001"}
+
+
+def _rec(model, level, solved, rounds, conf, quote="十个字以上的证据片段内容", bug_id=None, score=1):
     return {"model_raw": model, "model_canonical": model, "bug_level": level,
+            "bug_id": bug_id or _LEVEL_BUG[level], "score": score,
             "solved": solved, "rounds": rounds, "evidence_quote": quote, "confidence": conf}
 
 

@@ -24,13 +24,19 @@ NONTERMINAL = (RECEIVED, DOWNLOADING, TRANSCRIBING, EXTRACTING, RENDERING)
 TERMINAL = (SUCCEEDED, TERMINAL_FAILED)
 MAX_RETRY = 2
 
-# 决策
+# 决策（C2/C9）
 AUTO_OK = "auto_ok"
-PENDING = "pending"
+PENDING = "pending"                 # 普通低置信：批量确认可批
+PENDING_UNKNOWN = "pending_unknown"  # 模型名未知：批量排除，补别名表后 reprocess
+PENDING_CONFLICT = "pending_conflict"  # 同一 attempt 矛盾得分：逐条确认（组内无裁决时）
 APPROVED = "approved"
+REJECTED_CONFLICT = "rejected_conflict"  # 冲突组落败方：裁决恒存
 EXPIRED = "expired"
 STALE = "stale"
 BOARD_VISIBLE = (AUTO_OK, APPROVED)
+# 裁决恒存（不被 mark_stale 覆盖、凭指纹继承）：人工批准与冲突拒绝
+PERSISTENT_DECISIONS = (APPROVED, REJECTED_CONFLICT)
+PENDING_KINDS = (PENDING, PENDING_UNKNOWN, PENDING_CONFLICT)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
@@ -283,14 +289,20 @@ def get_decision(conn: sqlite3.Connection, record_id: str) -> sqlite3.Row | None
     return conn.execute("SELECT * FROM record_decisions WHERE record_id=?", (record_id,)).fetchone()
 
 
-def mark_stale(conn: sqlite3.Connection, aweme_id: str, keep_ids: set[str]) -> int:
-    rows = conn.execute("SELECT record_id FROM record_decisions WHERE aweme_id=?", (aweme_id,)).fetchall()
+def mark_stale(conn: sqlite3.Connection, aweme_id: str, keep_ids: set[str],
+               *, commit: bool = True) -> int:
+    """当前 extract 已不含的记录置 stale；裁决恒存的（approved/rejected_conflict）跳过
+    ——裁决不是产物状态，记录本次缺失不抹裁决（C2.3，消除 stale 抹拒绝再现重开的反例）。"""
+    rows = conn.execute(
+        "SELECT record_id, decision FROM record_decisions WHERE aweme_id=?", (aweme_id,)).fetchall()
     n = 0
     for r in rows:
-        if r["record_id"] not in keep_ids:
-            conn.execute("UPDATE record_decisions SET decision=? WHERE record_id=?", (STALE, r["record_id"]))
+        if r["record_id"] not in keep_ids and r["decision"] not in PERSISTENT_DECISIONS:
+            conn.execute("UPDATE record_decisions SET decision=? WHERE record_id=?",
+                         (STALE, r["record_id"]))
             n += 1
-    conn.commit()
+    if commit:
+        conn.commit()
     return n
 
 
