@@ -12,6 +12,16 @@ GLM-5.3:
   - g5.3
   - 国模一哥
   - 智谱 5.3
+GLM-5.2:
+  # 与 5.3 并列独立版本（ASR 常糊成 GRM）。只用版本号别名区分。
+  # ⚠️「一哥/国模一哥」是博主对 GLM 系【当时最新】版本的动态称呼，非固定版本——
+  # 某期一哥=5.2、另一期=5.3，绝不可把"一哥"绑某版本号（下方 5.3 的"国模一哥"
+  # 别名存历史风险，只在 5.3 为最新的那期成立；靠视频里的版本号数字才可靠）。
+  - glm5.2
+  - glm 5.2
+  - grm5.2
+  - grm 5.2
+  - gm5.2
 GLM-5.3 Flash:
   - glm5.3 flash
   - glm 5.3 flash
@@ -103,6 +113,15 @@ Claude Opus 5:
 Claude Sonnet 4.5:
   - claude sonnet 4.5
   - sonnet 4.5
+GPT 5.6 Luna:
+  # OpenAI GPT 5.6 Luna（ASR 常把 GPT 糊成 GBT，Luna 可能单独出现）。
+  - gpt 5.6 luna
+  - gpt5.6 luna
+  - gpt5.6luna
+  - gbt5.6luna
+  - gbt 5.6 luna
+  - gbt5.6 luna
+  - luna
 Gemini 3.7 Flash:
   - gemini 3.7 flash
   - gemini3.7
