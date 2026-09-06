@@ -1,8 +1,9 @@
 """手动处理单条视频（建真值集、调试用）。
 
     python -m core.cli "<抖音分享文本或链接>"
-    python -m core.cli --board            # 打印当前榜单
-    python -m core.cli --reprocess <id>   # 用现有 transcript 重跑提取+决策
+    python -m core.cli --board             # 打印当前榜单
+    python -m core.cli --reprocess <id>    # 用现有 transcript 重跑提取+决策
+    python -m core.cli --retranscribe <id> # 删 transcript 强制用 Gladia 重转+提取
 """
 from __future__ import annotations
 
@@ -46,6 +47,13 @@ def main(argv: list[str]) -> int:
                 return 1
             print(pipeline.reprocess(conn, argv[1]))
             return 0
+        if argv[0] == "--retranscribe":
+            if len(argv) < 2:
+                print("用法：--retranscribe <aweme_id>", file=sys.stderr)
+                return 1
+            status = pipeline.retranscribe(conn, argv[1])
+            print(f"status={status} aweme_id={argv[1]}")
+            return 0 if status == db.SUCCEEDED else 2
         from . import douyin
         text = argv[0]
         aweme_id = douyin.resolve_aweme_id(text)

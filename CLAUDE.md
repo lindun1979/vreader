@@ -44,7 +44,8 @@ reprocess/迁移等 CLI 写操作需 flock，**必须先 `launchctl unload` 停 
 launchd 管理（禁 nohup），登记运维斯 SERVICES.md。
 
 ## 测试
-`pytest -q`（92 项全绿）。手动处理：`python -m core.cli "<链接>"`；重跑：`--reprocess <id>`。
+`pytest -q`（94 项全绿）。手动处理：`python -m core.cli "<链接>"`；重跑提取：`--reprocess <id>`；
+强制用 Gladia 重转（修此前落兜底 ASR 的数据，删 transcript 走全量管线）：`--retranscribe <id>`。
 真值集：`tests/gold/token_bug/gold.json`（用户人工标注 7 视频得分，进仓）；
 准确率评测脚本思路见开发记录（提取 vs 真值按 模型×等级 比对）。
 

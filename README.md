@@ -22,7 +22,8 @@
   API（匿名 ttwid cookie，无需登录）。见 `core/douyin.py`。
 - **ASR**：Gladia 云转写为主（gold 真值集 97 格 100% vs SenseVoice 89.7%，带
   models.yml 热词，`GLADIA_API_KEY` 配 .env），失败自动回落本地 SenseVoiceSmall
-  （funasr, CPU，长视频分块）。`extract.json` 的 `asr_model` 记录实际所用引擎。
+  （funasr, CPU，长视频分块）。`extract.json` 的 `asr_model` 记录实际所用引擎；
+  单任务回执 + 榜单末尾均会**显式警示**落到兜底 ASR 的视频（名字易糊、结果存疑）。
 - **提取**：`LLM_BACKEND` 可选 `agy`（Antigravity CLI，生产主通道，`LLM_MODEL` 走 agy，
   兜底链走 :8317；生产直连不通须配 `AGY_PROXY` 代理）/ `openai`（:8317 cliproxy）/ `claude`
   （本地 CLI）+ 频道 prompt + 模型别名表（纠 ASR 错写）。
@@ -59,6 +60,7 @@ pytest -q                                   # 全部单测
 python -m core.cli "<抖音分享链接>"          # 手动处理一条（建真值集）
 python -m core.cli --board                  # 打印榜单（纯读，不取写锁）
 python -m core.cli --reprocess <aweme_id>   # 现有 transcript 重跑提取+决策（prompt/别名改动后）
+python -m core.cli --retranscribe <aweme_id> # 删 transcript 强制用 Gladia 重转+提取（修兜底 ASR 数据）
 python -m core.service                       # 起服务
 ```
 

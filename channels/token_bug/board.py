@@ -9,6 +9,7 @@ from pathlib import Path
 
 LEVELS = ["青铜", "白银", "黄金", "钻石", "王者"]
 _ROUNDS_SHOWN = {"黄金", "钻石", "王者"}  # 这些等级标注第几次解出
+_TRUSTED_ASR = "gladia-v2"  # 主 ASR；其余（本地兜底 SenseVoice）会糊模型名，数据存疑
 
 
 def _cell(attempts: list[dict], level: str) -> str:
@@ -36,9 +37,12 @@ def render(extracts: list[dict], visible_ids, record_id_fn) -> str:
     per_model: dict[str, list[dict]] = {}
     seen: set[str] = set()  # 规则7 渲染防御：同 rid 只计一次（防双计）
     n_videos = 0
+    fallback_ids: list[str] = []  # 用兜底 ASR 转写的视频（数据存疑，聚合警示）
     for ex in extracts:
         n_videos += 1
         aid = ex["video_id"]
+        if ex.get("asr_model") != _TRUSTED_ASR:
+            fallback_ids.append(aid)
         for r in ex["records"]:
             rid = record_id_fn(aid, r)
             if rid not in visible_ids or rid in seen:
@@ -64,6 +68,11 @@ def render(extracts: list[dict], visible_ids, record_id_fn) -> str:
     if not models:
         lines.append("| — | _（暂无上榜记录）_ | 0 |" + " |" * len(LEVELS))
     lines.append("")
+    if fallback_ids:
+        lines.append(f"> ⚠️ **数据质量警示**：{len(fallback_ids)} 条视频用兜底 ASR"
+                     f"（非 {_TRUSTED_ASR}）转写，模型名/得分可能识别不准："
+                     f"{', '.join(fallback_ids)}。建议 `--retranscribe <id>` 用 Gladia 重转。")
+        lines.append("")
     return "\n".join(lines)
 
 

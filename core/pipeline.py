@@ -210,6 +210,22 @@ def reprocess(conn, aweme_id: str) -> str:
             f"rev={ex.get('result_rev')}")
 
 
+def retranscribe(conn, aweme_id: str) -> str:
+    """强制用主 ASR（Gladia）重转：删 transcript+extract → 走完整管线重下载+转写+提取+
+    渲染。用于修复此前落到兜底 ASR（SenseVoice 糊模型名）的视频。需先取 flock（调用方）。"""
+    p = _paths(aweme_id)
+    Path(p["transcript"]).unlink(missing_ok=True)
+    Path(p["extract"]).unlink(missing_ok=True)
+    if db.get_task(conn, aweme_id) is None:  # CLI 手动处理的视频可能无 task 行
+        detail = douyin.fetch_detail(aweme_id)
+        title = douyin.meta_from_detail(detail)["title"]
+        db.insert_task(conn, aweme_id=aweme_id, channel=CHANNEL,
+                       raw_link=f"https://www.douyin.com/video/{aweme_id}",
+                       chat_id="", sender_id="", title=title)
+    db.set_status(conn, aweme_id, db.RECEIVED)
+    return process_task(conn, db.get_task(conn, aweme_id))
+
+
 class _Terminal(Exception):
     """不可重试的失败（超限等）。"""
 
