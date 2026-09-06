@@ -336,3 +336,80 @@ def board_visible_ids(conn: sqlite3.Connection) -> set[str]:
     rows = conn.execute("SELECT record_id FROM record_decisions WHERE decision IN (?,?)",
                         BOARD_VISIBLE).fetchall()
     return {r["record_id"] for r in rows}
+
+
+# ---------- rid 迁移（C9/V-M15：身份键改造的生产兼容收尾）----------
+
+_MIGRATE_PRIORITY = {
+    APPROVED: 5, REJECTED_CONFLICT: 4,
+    PENDING_CONFLICT: 3, PENDING_UNKNOWN: 3, PENDING: 3,
+    AUTO_OK: 2, STALE: 1, EXPIRED: 1,
+}
+
+
+def _merge_decision_rows(rows: list[sqlite3.Row], target_rid: str, aweme_id: str) -> dict:
+    """合并多源为目标行：优先级 APPROVED>rejected>pending>auto_ok>stale/expired；
+    多个 APPROVED 取最早 approved_at（保留其 approved_by/at）。返回目标行字段 dict。"""
+    best = max(rows, key=lambda r: (_MIGRATE_PRIORITY.get(r["decision"], 0),
+                                    -(r["approved_at"] or float("inf"))
+                                    if r["decision"] == APPROVED else 0))
+    approvers = [r for r in rows if r["decision"] == APPROVED]
+    approver = min(approvers, key=lambda r: (r["approved_at"] or float("inf"))) if approvers else None
+    return {
+        "record_id": target_rid, "aweme_id": aweme_id, "decision": best["decision"],
+        "extractor_version": best["extractor_version"], "prompt_hash": best["prompt_hash"],
+        "approved_by": approver["approved_by"] if approver else None,
+        "approved_at": approver["approved_at"] if approver else None,
+        "created_at": min(r["created_at"] for r in rows),
+    }
+
+
+def migrate_rid_group(conn: sqlite3.Connection, target_rid: str, source_rids: list[str],
+                      aweme_id: str, *, expected_before: dict[str, str] | None = None) -> str:
+    """把一组源 rid 合并迁移到 target_rid（单事务，v6 C9）。
+    - 前置校验：源行现状须与审计单登记一致（expected_before），不符 → 拒绝该组。
+    - APPROVED 与 rejected_conflict 并存（理论不应出现）→ 拒绝，标人工。
+    - DELETE 显式排除 target_rid（防 INSERT 后 DELETE 全部源把目标删掉，v6 修订）。
+    - 幂等：非目标源均已消失 ∧ 目标行==预期合并结果 → no-op。
+    返回 'migrated' | 'noop' | 'rejected_precondition' | 'rejected_manual'。"""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        q = ",".join("?" * len(source_rids))
+        rows = conn.execute(
+            f"SELECT * FROM record_decisions WHERE record_id IN ({q})", source_rids).fetchall()
+        present = {r["record_id"]: r for r in rows}
+        if expected_before is not None:
+            for rid, exp in expected_before.items():
+                cur = present.get(rid)
+                if (cur["decision"] if cur else None) != exp:
+                    conn.rollback()
+                    return "rejected_precondition"
+        decs = {r["decision"] for r in rows}
+        if APPROVED in decs and REJECTED_CONFLICT in decs:
+            conn.rollback()
+            return "rejected_manual"
+        non_target = [rid for rid in source_rids if rid != target_rid]
+        target_now = present.get(target_rid)
+        merged = _merge_decision_rows(rows, target_rid, aweme_id) if rows else None
+        # 幂等判据：非目标源均已消失 ∧ 目标行 == 预期合并结果
+        if all(rid not in present for rid in non_target) and target_now is not None and merged is not None:
+            if (target_now["decision"] == merged["decision"]
+                    and target_now["approved_by"] == merged["approved_by"]):
+                conn.rollback()
+                return "noop"
+        if merged is None:
+            conn.rollback()
+            return "noop"
+        if non_target:
+            dq = ",".join("?" * len(non_target))
+            conn.execute(f"DELETE FROM record_decisions WHERE record_id IN ({dq})", non_target)
+        conn.execute(
+            "INSERT OR REPLACE INTO record_decisions(record_id, aweme_id, decision,"
+            " extractor_version, prompt_hash, approved_by, approved_at, created_at)"
+            " VALUES (:record_id,:aweme_id,:decision,:extractor_version,:prompt_hash,"
+            ":approved_by,:approved_at,:created_at)", merged)
+        conn.commit()
+        return "migrated"
+    except Exception:
+        conn.rollback()
+        raise
