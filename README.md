@@ -9,15 +9,19 @@
 ## 管线
 
 ```
-分享链接 → 解析 aweme_id → 下载(直连 detail API) → ffmpeg 16k wav
-  → SenseVoice 转写 → claude 提取(schema+证据校验) → 决策(auto_ok/pending)
+分享链接 → 解析 aweme_id → 下载(直连 detail API) → Gladia 云转写(主)
+  ｜失败回落 ffmpeg 16k wav → SenseVoice 分块转写
+  → LLM 提取(schema+证据校验) → 决策(auto_ok/pending)
   → 渲染 board.md → 飞书回执
 ```
 
 - **下载**：不用 yt-dlp（其 Douyin extractor 漏传参数已失效），直接调 web detail
   API（匿名 ttwid cookie，无需登录）。见 `core/douyin.py`。
-- **ASR**：SenseVoiceSmall（funasr, CPU），本项目自建 venv 独立加载。
-- **提取**：`claude -p --output-format json` + 频道 prompt + 模型别名表（纠 ASR 错写）。
+- **ASR**：Gladia 云转写为主（gold 真值集 97 格 100% vs SenseVoice 89.7%，带
+  models.yml 热词，`GLADIA_API_KEY` 配 .env），失败自动回落本地 SenseVoiceSmall
+  （funasr, CPU，长视频分块）。`extract.json` 的 `asr_model` 记录实际所用引擎。
+- **提取**：OpenAI 兼容端点（默认 :8317 cliproxy，`LLM_MODEL`+兜底链；`LLM_BACKEND=claude`
+  可切 claude CLI）+ 频道 prompt + 模型别名表（纠 ASR 错写）。
 - **状态**：SQLite（WAL、每线程独立连接、原子领取）；崩溃恢复按落盘产物跳过阶段。
 - **通知**：outbox 表，与任务终态同事务写入，独立线程退避重试，重启恢复投递。
 - **审批**：`record_decisions` 用内容指纹作身份；`auto_ok` 每次按 confidence 重判，
