@@ -141,32 +141,68 @@ def set_status(conn: sqlite3.Connection, aweme_id: str, status: str,
     conn.commit()
 
 
-def mark_retry_or_terminal(conn: sqlite3.Connection, aweme_id: str, error: str,
-                           *, backoff_base: float = 60.0) -> str:
-    """失败后按 retry_count 决定 retryable 还是 terminal。返回落定的状态。"""
+def finalize_task(conn: sqlite3.Connection, aweme_id: str, status: str, *,
+                  error: str | None = None, chat_id: str | None = None,
+                  content: str | None = None, retry_count: int | None = None,
+                  next_retry_at: float | None = None) -> None:
+    """C1 事务所有权：终态/退避状态更新 + （可选）通知写 outbox，同一连接一次 commit；
+    异常 rollback 后 re-raise（有 chat_id 的任务任何终态路径必经此带通知）。"""
     now = time.time()
+    sets = ["status=?", "error=?", "updated_at=?"]
+    vals: list = [status, error, now]
+    if retry_count is not None:
+        sets.append("retry_count=?"); vals.append(retry_count)
+    if next_retry_at is not None:
+        sets.append("next_retry_at=?"); vals.append(next_retry_at)
+    vals.append(aweme_id)
+    try:
+        conn.execute(f"UPDATE tasks SET {', '.join(sets)} WHERE aweme_id=?", vals)
+        if chat_id and content:
+            enqueue_notification(conn, chat_id, content, commit=False)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def mark_retry_or_terminal(conn: sqlite3.Connection, aweme_id: str, error: str,
+                           *, backoff_base: float = 60.0,
+                           chat_id: str | None = None) -> str:
+    """失败后按 retry_count 决定 retryable 还是 terminal。返回落定的状态。
+    落 terminal 时，通知与状态在同一事务写出（C1，无静默失败）。"""
     row = conn.execute("SELECT retry_count FROM tasks WHERE aweme_id=?", (aweme_id,)).fetchone()
     rc = (row["retry_count"] if row else 0) + 1
     if rc > MAX_RETRY:
-        conn.execute("UPDATE tasks SET status=?, retry_count=?, error=?, updated_at=? WHERE aweme_id=?",
-                     (TERMINAL_FAILED, rc, error, now, aweme_id))
-        conn.commit()
+        content = f"❌ 处理失败（已重试耗尽）：{error[:120]}" if chat_id else None
+        finalize_task(conn, aweme_id, TERMINAL_FAILED, error=error,
+                      chat_id=chat_id, content=content, retry_count=rc)
         return TERMINAL_FAILED
-    next_at = now + backoff_base * (2 ** (rc - 1))
-    conn.execute("UPDATE tasks SET status=?, retry_count=?, next_retry_at=?, error=?, updated_at=? WHERE aweme_id=?",
-                 (RETRYABLE_FAILED, rc, next_at, error, now, aweme_id))
-    conn.commit()
+    next_at = time.time() + backoff_base * (2 ** (rc - 1))
+    finalize_task(conn, aweme_id, RETRYABLE_FAILED, error=error,
+                  retry_count=rc, next_retry_at=next_at)
     return RETRYABLE_FAILED
 
 
 def recover_nonterminal(conn: sqlite3.Connection) -> int:
-    """启动恢复：把卡在中间态的任务置回 received（保留 retry_count）。"""
+    """启动恢复：把卡在执行中的任务递增 retry_count 后置回 received（毒丸防护，cf5 #1
+    ——反复崩溃进程的任务不无限恢复）；超 MAX_RETRY 的置 terminal 并写通知。
+    返回置回 received（可再领取）的数量。RECEIVED 态任务（未启动）不动、不计次。"""
+    rows = conn.execute(
+        "SELECT aweme_id, chat_id, retry_count FROM tasks WHERE status IN (?,?,?,?)",
+        (DOWNLOADING, TRANSCRIBING, EXTRACTING, RENDERING)).fetchall()
     now = time.time()
-    cur = conn.execute(
-        "UPDATE tasks SET status=?, next_retry_at=0, updated_at=? WHERE status IN (?,?,?,?)",
-        (RECEIVED, now, DOWNLOADING, TRANSCRIBING, EXTRACTING, RENDERING))
-    conn.commit()
-    return cur.rowcount
+    recovered = 0
+    for r in rows:
+        rc = r["retry_count"] + 1
+        if rc > MAX_RETRY:
+            content = "❌ 处理失败（多次中断已放弃）。可重新发链接重试。" if r["chat_id"] else None
+            finalize_task(conn, r["aweme_id"], TERMINAL_FAILED,
+                          error="recover: 超过恢复次数上限（疑似毒丸）",
+                          chat_id=r["chat_id"], content=content, retry_count=rc)
+        else:
+            finalize_task(conn, r["aweme_id"], RECEIVED, retry_count=rc, next_retry_at=0)
+            recovered += 1
+    return recovered
 
 
 def count_active(conn: sqlite3.Connection) -> int:

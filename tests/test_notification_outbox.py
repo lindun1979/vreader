@@ -46,13 +46,13 @@ def test_restart_resumes_from_next_attempt_at(db_path):
 
 
 def test_status_and_notification_same_transaction(db_path):
-    """终态状态更新与通知写入在同一事务：一起可见。"""
-    from core import pipeline
+    """终态状态更新与通知写入在同一事务：一起可见（C1 finalize_task）。"""
     db.init(db_path)
     c = db.connect(db_path)
     db.insert_task(c, aweme_id="a1", channel="token_bug", raw_link="x",
                    chat_id="chat1", sender_id="s", title="t")
-    pipeline._enqueue_and_status(c, "a1", db.TERMINAL_FAILED, "chat1", "failed msg", error="e")
+    db.finalize_task(c, "a1", db.TERMINAL_FAILED, error="e",
+                     chat_id="chat1", content="failed msg")
     assert db.get_task(c, "a1")["status"] == db.TERMINAL_FAILED
     assert len(db.claim_due_notifications(c)) == 1
     c.close()

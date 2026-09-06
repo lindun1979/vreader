@@ -225,6 +225,56 @@ def _normalize_quote(s: str) -> str:
     return re.sub(r"\s+", "", s or "")
 
 
+def validate_extract(extract: dict, *, transcript: str | None = None,
+                     expected_video_id: str | None = None) -> None:
+    """统一产物校验入口（C3）：读回缓存/reprocess 前必过，否则视为不可信。
+    校验：envelope schema + video_id 匹配 + 逐记录 schema + derive 一致 +
+    canonical∈词表∪UNKNOWN + evidence 归一非空(≥4)且（给了 transcript 时）为其子串。
+    失败抛 ExtractError。"""
+    errs = sorted(_validator.iter_errors(extract), key=lambda e: list(e.path))
+    if errs:
+        raise ExtractError(f"envelope schema: {errs[0].message}")
+    if expected_video_id is not None and extract.get("video_id") != expected_video_id:
+        raise ExtractError(f"video_id 不匹配: {extract.get('video_id')} != {expected_video_id}")
+    models = _load_models()
+    norm_tx = _normalize_quote(transcript) if transcript is not None else None
+    for r in extract["records"]:
+        rerrs = sorted(_record_validator.iter_errors(r), key=lambda e: list(e.path))
+        if rerrs:
+            raise ExtractError(f"record schema: {rerrs[0].message}")
+        solved, rounds = derive_solved_rounds(r.get("bug_level"), r.get("score"))
+        if solved is None or r.get("solved") != solved or r.get("rounds") != rounds:
+            raise ExtractError(
+                f"solved/rounds 与 score 不一致: {r.get('bug_level')} score={r.get('score')}")
+        if r["model_canonical"] not in models and r["model_canonical"] != "UNKNOWN":
+            raise ExtractError(f"model_canonical 非法（不在词表也非 UNKNOWN）: {r['model_canonical']}")
+        q = _normalize_quote(r.get("evidence_quote", ""))
+        if len(q) < 4:
+            raise ExtractError("evidence 归一后过短(<4)")
+        if norm_tx is not None and q not in norm_tx:
+            raise ExtractError("evidence 非转写子串")
+
+
+def load_valid_extract(extract_path: str, *, transcript: str | None = None,
+                       expected_video_id: str | None = None) -> dict | None:
+    """读回缓存 extract.json 并校验（C3 留证重建）：不存在/空/坏 → 返回 None，坏文件
+    另存为 .bad.<ts> 保留证据（下游据此重新提取）。校验通过才返回 dict。"""
+    p = Path(extract_path)
+    if not p.exists() or p.stat().st_size == 0:
+        return None
+    try:
+        ex = json.loads(p.read_text(encoding="utf-8"))
+        validate_extract(ex, transcript=transcript, expected_video_id=expected_video_id)
+        return ex
+    except (json.JSONDecodeError, ExtractError, OSError) as e:
+        try:
+            p.rename(p.with_suffix(f".json.bad.{int(time.time())}"))
+        except OSError:
+            pass
+        print(f"[extract] 缓存 extract.json 校验失败，留证重建: {e}", flush=True)
+        return None
+
+
 def build_extract(*, aweme_id: str, title: str, transcript: str,
                   claude_text: str | None = None) -> dict:
     """把 LLM 输出组装为 extract 对象并做全部校验；不写库。校验失败抛 ExtractError。"""

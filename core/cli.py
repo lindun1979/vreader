@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sys
 
-from . import config, db, pipeline
+from . import config, db, lock, pipeline
 
 
 def _db():
@@ -17,16 +17,29 @@ def _db():
     return db.connect(dbp)
 
 
+def _print_board() -> int:
+    """--board 纯读（C6）：直接打印落盘的 board.md，不 init、不渲染、不取写锁。"""
+    p = config.channel_dir(pipeline.CHANNEL) / "board.md"
+    if p.exists():
+        print(p.read_text(encoding="utf-8"))
+    else:
+        print("（暂无榜单）")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if not argv:
         print(__doc__)
         return 1
+    if argv[0] == "--board":
+        return _print_board()
+    # 写路径（处理/重跑）取数据目录 flock，与 serve 及其他 CLI 写实例互斥
+    dirlock = lock.DataDirLock(config.DATA_DIR)
+    if not dirlock.acquire(blocking=False):
+        print("数据目录被 serve 或另一 CLI 实例占用，拒绝写操作。", file=sys.stderr)
+        return 3
     conn = _db()
     try:
-        if argv[0] == "--board":
-            print(pipeline.render_board(conn))
-            return 0
-        # 直接同步处理一条（不经队列/服务），便于建真值集
         from . import douyin
         text = argv[0]
         aweme_id = douyin.resolve_aweme_id(text)
@@ -42,6 +55,7 @@ def main(argv: list[str]) -> int:
         return 0 if status == db.SUCCEEDED else 2
     finally:
         conn.close()
+        dirlock.release()
 
 
 if __name__ == "__main__":

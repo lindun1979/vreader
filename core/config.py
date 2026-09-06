@@ -65,6 +65,15 @@ MIN_DISK_GB = 20
 PENDING_EXPIRE_DAYS = 30
 CONFIDENCE_THRESHOLD = 0.7
 
+# 执行预算（C4）：单任务总墙钟预算 + 各阶段上限（阶段实际预算 = min(上限, 剩余)）
+TASK_BUDGET_S = int(get("VREADER_TASK_BUDGET_S", "3600"))
+DOWNLOAD_TIMEOUT_S = int(get("VREADER_DOWNLOAD_TIMEOUT_S", "600"))
+ASR_TIMEOUT_S = int(get("VREADER_ASR_TIMEOUT_S", "1800"))
+FFMPEG_TIMEOUT_S = int(get("VREADER_FFMPEG_TIMEOUT_S", "600"))
+# 健康判定阈值（C5）
+OUTBOX_STALE_S = 3600          # 最老未送达通知 > 此值 → 不健康
+HEALTH_STALE_BEAT_S = 90       # 线程心跳超此未更新且非在执行 → 视为线程死
+
 
 def channel_dir(channel: str) -> Path:
     return DATA_DIR / channel
