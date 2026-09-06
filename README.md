@@ -4,7 +4,10 @@
 「token（词源）」的模型实测视频，自动维护一张「模型 × bug 难度」榜单。
 
 **用法（飞书）**：把抖音分享链接发给机器人 → 自动下载/转写/提取 → 处理完回执 →
-发「vr榜单」取回最新榜单；低置信度记录进待确认区，管理员发「vr确认 <video_id>」入榜。
+- `vr榜单` 取回最新榜单
+- `vr明细 <video_id>` 看某视频逐条明细（记录码 + 状态 + 完整证据）
+- `vr确认 <video_id>` 批量确认普通待确认记录入榜；`vr确认 <video_id> <记录码>` 逐条
+  确认矛盾记录；`vr确认 <video_id> rev:<版本>` 绑版本确认（防确认过时内容）
 
 ## 管线
 
@@ -23,10 +26,18 @@
 - **提取**：`LLM_BACKEND` 可选 `agy`（Antigravity CLI，生产主通道，`LLM_MODEL` 走 agy，
   兜底链走 :8317；生产直连不通须配 `AGY_PROXY` 代理）/ `openai`（:8317 cliproxy）/ `claude`
   （本地 CLI）+ 频道 prompt + 模型别名表（纠 ASR 错写）。
-- **状态**：SQLite（WAL、每线程独立连接、原子领取）；崩溃恢复按落盘产物跳过阶段。
-- **通知**：outbox 表，与任务终态同事务写入，独立线程退避重试，重启恢复投递。
-- **审批**：`record_decisions` 用内容指纹作身份；`auto_ok` 每次按 confidence 重判，
-  仅 `approved` 凭指纹继承（重跑不错位、降置信度自动退出主榜）。
+- **状态**：SQLite（WAL、每线程独立连接、原子领取）；崩溃恢复按落盘产物前推跳过
+  阶段（产物齐全时不依赖上游网络）；recover 递增 retry_count 防毒丸崩溃循环。
+- **通知**：outbox 表，与任务终态同事务写入（`db.finalize_task`，无静默失败），
+  独立线程退避重试，重启恢复投递。
+- **审批**：`record_decisions` 用内容指纹作身份（`model_key`＋`bug_slot`＋score，未知
+  模型/空 bug_id 不误合并）；三态待确认 `pending`/`pending_unknown`/`pending_conflict`；
+  `auto_ok` 每次按 confidence 重判，`approved`/`rejected_conflict` 凭指纹继承恒存
+  （重跑不错位、降置信度自动退出主榜、矛盾组唯一结论）。
+- **可靠性加固**：flock 单实例执行权；健康三态 healthz（在执行/空闲有活/退避）+ 线程
+  守护三分支，不健康返 503（线程死/outbox 积压/db 连错/低磁盘/ASR 卡死）；磁盘门禁
+  （拒收+暂停+限频告警）；下载字节/时限硬限、subprocess timeout + killpg 后代、任务
+  总预算；产物原子写 + 发布锁。
 
 ## 目录
 
@@ -46,7 +57,8 @@ pip install -r requirements.txt
 cp .env.example .env   # 填凭据，chmod 600
 pytest -q                                   # 全部单测
 python -m core.cli "<抖音分享链接>"          # 手动处理一条（建真值集）
-python -m core.cli --board                  # 打印榜单
+python -m core.cli --board                  # 打印榜单（纯读，不取写锁）
+python -m core.cli --reprocess <aweme_id>   # 现有 transcript 重跑提取+决策（prompt/别名改动后）
 python -m core.service                       # 起服务
 ```
 
