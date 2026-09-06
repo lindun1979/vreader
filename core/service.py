@@ -115,10 +115,10 @@ def handle_ingest(conn, payload: dict) -> tuple[int, str]:
     text = (payload.get("text") or "").strip()
     chat_id = payload.get("chat_id") or ""
     sender_id = payload.get("sender_id") or ""
-    try:
-        aweme_id = douyin.resolve_aweme_id(text)
+    try:  # 2h：resolve 用小超时（ACK 预算内），卡住即快速失败让用户重试
+        aweme_id = douyin.resolve_aweme_id(text, timeout=config.ACK_RESOLVE_TIMEOUT_S)
     except douyin.DownloadError as e:
-        return 200, f"无法解析这个抖音链接：{e}"
+        return 200, f"无法解析这个抖音链接（{e}）。可稍后重发。"
     existing = db.get_task(conn, aweme_id)
     if existing:
         return 200, f"这条视频已在处理/已完成（当前状态：{existing['status']}）"
@@ -126,14 +126,10 @@ def handle_ingest(conn, payload: dict) -> tuple[int, str]:
         return 200, "磁盘空间不足，暂时无法接收新任务，请稍后再试。"
     if db.count_active(conn) >= config.MAX_QUEUE:
         return 200, "队列已满，请稍后再发。"
-    try:
-        detail = douyin.fetch_detail(aweme_id)
-        title = douyin.meta_from_detail(detail)["title"]
-    except douyin.DownloadError:
-        title = ""
+    # 2h：ingest 不做慢网络（不同步取 detail）——title 由 worker 处理时补，ACK 快速返回
     db.insert_task(conn, aweme_id=aweme_id, channel=pipeline.CHANNEL, raw_link=text,
-                   chat_id=chat_id, sender_id=sender_id, title=title)
-    return 200, f"已收到，正在处理：{title[:30] or aweme_id}。处理完会把结果发给你。"
+                   chat_id=chat_id, sender_id=sender_id, title="")
+    return 200, f"已收到，正在处理：{aweme_id}。处理完会把结果发给你。"
 
 
 def handle_board(conn, payload: dict) -> tuple[int, str]:

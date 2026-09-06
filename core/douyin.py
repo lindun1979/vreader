@@ -69,8 +69,9 @@ def _get_ttwid(force: bool = False) -> str:
     raise DownloadError("ttwid 注册端点未返回 cookie")
 
 
-def resolve_aweme_id(share_text: str) -> str:
-    """从分享文本/链接解析出 aweme_id。短链会跟随重定向。"""
+def resolve_aweme_id(share_text: str, *, timeout: float = 8.0) -> str:
+    """从分享文本/链接解析出 aweme_id。短链会跟随重定向。
+    timeout 覆盖短链重定向的 socket 超时——ingest 同步路径传小值，卡住则快速失败让用户重试。"""
     m = _URL_RE.search(share_text or "")
     if not m:
         raise DownloadError("分享文本中未找到链接")
@@ -82,7 +83,7 @@ def resolve_aweme_id(share_text: str) -> str:
     # 短链：跟随重定向拿最终 URL
     try:
         req = urllib.request.Request(url, headers=_headers())
-        with urllib.request.urlopen(req, timeout=12) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             final = resp.geturl()
     except urllib.error.URLError as e:
         raise DownloadError(f"短链重定向失败: {e}") from e
@@ -149,9 +150,15 @@ def _play_urls(detail: dict) -> list[str]:
     return urls
 
 
-def download(aweme_id: str, dest_path: str, *, detail: dict | None = None) -> dict:
-    """下载视频到 dest_path，返回元数据。已存在则跳过下载（幂等）。"""
+def download(aweme_id: str, dest_path: str, *, detail: dict | None = None,
+             max_bytes: int | None = None, timeout_s: float | None = None,
+             sock_timeout: float = 30.0) -> dict:
+    """下载视频到 dest_path，返回元数据。已存在则跳过下载（幂等）。
+
+    硬边界（C4）：逐块 socket 超时（覆盖响应头/body 慢等待）+ 累计字节硬限（超限即断，
+    不写满磁盘/OOM）+ 总时限（覆盖 trickle：持续小流量但整体不结束）。任一超限删 .part。"""
     import os
+    import time as _t
     detail = detail or fetch_detail(aweme_id)
     meta = meta_from_detail(detail)
     if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
@@ -161,14 +168,21 @@ def download(aweme_id: str, dest_path: str, *, detail: dict | None = None) -> di
     ttwid = _get_ttwid()
     last_err: Exception | None = None
     for u in _play_urls(detail):
+        tmp = dest_path + ".part"
         try:
             req = urllib.request.Request(u, headers=_headers(ttwid))
-            tmp = dest_path + ".part"
-            with urllib.request.urlopen(req, timeout=60) as resp, open(tmp, "wb") as f:
+            deadline = (_t.monotonic() + timeout_s) if timeout_s else None
+            total = 0
+            with urllib.request.urlopen(req, timeout=sock_timeout) as resp, open(tmp, "wb") as f:
                 while True:
+                    if deadline is not None and _t.monotonic() > deadline:
+                        raise DownloadError("下载总时限超时（疑似 trickle）")
                     chunk = resp.read(1 << 16)
                     if not chunk:
                         break
+                    total += len(chunk)
+                    if max_bytes is not None and total > max_bytes:
+                        raise DownloadError(f"下载超字节上限 {total} > {max_bytes}")
                     f.write(chunk)
             if os.path.getsize(tmp) < 1024:
                 raise DownloadError("下载内容过小")
@@ -176,7 +190,11 @@ def download(aweme_id: str, dest_path: str, *, detail: dict | None = None) -> di
             meta["skipped"] = False
             meta["bytes"] = os.path.getsize(dest_path)
             return meta
-        except Exception as e:  # noqa: BLE001 换下一个播放地址
+        except Exception as e:  # noqa: BLE001 换下一个播放地址；清理半成品 .part
             last_err = e
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
             continue
     raise DownloadError(f"所有播放地址下载失败: {last_err}")

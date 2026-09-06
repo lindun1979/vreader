@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 from pathlib import Path
 
 from . import config, db, douyin, extract as extract_mod, lock, util
@@ -85,10 +86,17 @@ def _ensure_video(aweme_id: str, p: dict, task) -> str:
     meta = douyin.meta_from_detail(detail)
     if meta["duration_s"] > config.MAX_DURATION_S:
         raise _Terminal(f"视频过长 {meta['duration_s']}s > {config.MAX_DURATION_S}s")
-    dl = douyin.download(aweme_id, p["video"], detail=detail)
+    dl = douyin.download(aweme_id, p["video"], detail=detail,
+                         max_bytes=config.MAX_BYTES, timeout_s=config.DOWNLOAD_TIMEOUT_S)
     if dl.get("bytes", 0) > config.MAX_BYTES:
         raise _Terminal(f"视频过大 {dl['bytes']} 字节")
     return meta.get("title") or task["title"] or ""
+
+
+def _check_budget(deadline: float) -> None:
+    """C4：阶段前若总预算剩余不足则按可重试失败终止（防多阶段累计超时无界）。"""
+    if deadline - time.monotonic() <= 60:
+        raise RuntimeError("任务总预算耗尽（剩余 <60s）")
 
 
 def _read_if_present(path: str) -> str | None:
@@ -146,9 +154,12 @@ def process_task(conn, task) -> str:
                 return _finish(conn, aweme_id, chat_id, ex, p)
 
         # 需要 transcript：确保有 video（已在盘则跳过下载，detail 失败不致命）
+        deadline = time.monotonic() + config.TASK_BUDGET_S  # C4 任务总预算
         if transcript is None:
+            _check_budget(deadline)
             db.set_status(conn, aweme_id, db.DOWNLOADING)
             title = _ensure_video(aweme_id, p, task)
+            _check_budget(deadline)
             db.set_status(conn, aweme_id, db.TRANSCRIBING)
             from . import asr
             transcript = asr.video_to_transcript(p["video"], p["wav"], p["transcript"])
@@ -156,6 +167,7 @@ def process_task(conn, task) -> str:
             title = task["title"] or ""
 
         # extract（缓存读回过 validate，坏则留证重建 C3）
+        _check_budget(deadline)
         db.set_status(conn, aweme_id, db.EXTRACTING)
         ex = extract_mod.load_valid_extract(p["extract"], transcript=transcript,
                                             expected_video_id=aweme_id)

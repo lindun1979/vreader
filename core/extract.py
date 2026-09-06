@@ -181,16 +181,34 @@ def _call_agy(prompt: str, *, timeout: int = 300, model: str | None = None) -> s
         env.setdefault("NO_PROXY", "127.0.0.1,localhost")
     cmd = [config.AGY_BIN, "-p", prompt, "--model", model or config.LLM_MODEL,
            "--print-timeout", f"{timeout}s"]
+    rc, out, err = _run_cli(cmd, timeout=timeout + 30, env=env, name="agy CLI")
+    if rc != 0:
+        raise ExtractError(f"agy CLI 退出码 {rc}: {err[:300]}")
+    return out or ""
+
+
+def _run_cli(cmd: list[str], *, timeout: int, env: dict | None = None,
+             name: str = "CLI") -> tuple[int, str, str]:
+    """跑外部 CLI（自立进程组）；超时 killpg 杀整棵执行树后代，避免遗留 ffmpeg 等孤儿。"""
+    import signal
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True,
-                              timeout=timeout + 30, env=env)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, env=env, start_new_session=True)
     except FileNotFoundError as e:
-        raise ExtractError(f"agy CLI 未找到: {config.AGY_BIN}") from e
+        raise ExtractError(f"{name} 未找到: {cmd[0]}") from e
+    try:
+        out, err = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired as e:
-        raise ExtractError("agy CLI 超时") from e
-    if proc.returncode != 0:
-        raise ExtractError(f"agy CLI 退出码 {proc.returncode}: {proc.stderr[:300]}")
-    return proc.stdout or ""
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)  # 杀整组（含后代）
+        except (ProcessLookupError, OSError):
+            pass
+        try:
+            proc.communicate(timeout=5)
+        except Exception:  # noqa: BLE001
+            pass
+        raise ExtractError(f"{name} 超时") from e
+    return proc.returncode, out or "", err or ""
 
 
 def _call_openai(prompt: str, *, timeout: int = 300, model: str | None = None) -> str:
@@ -225,20 +243,15 @@ def _call_openai(prompt: str, *, timeout: int = 300, model: str | None = None) -
 
 def _call_claude(prompt: str, *, timeout: int = 300) -> str:
     """调 claude CLI，返回助手文本。"""
+    rc, out, err = _run_cli(
+        [config.CLAUDE_BIN, "-p", prompt, "--output-format", "json"],
+        timeout=timeout, name="claude CLI")
+    if rc != 0:
+        raise ExtractError(f"claude CLI 退出码 {rc}: {err[:300]}")
     try:
-        proc = subprocess.run(
-            [config.CLAUDE_BIN, "-p", prompt, "--output-format", "json"],
-            capture_output=True, text=True, timeout=timeout)
-    except FileNotFoundError as e:
-        raise ExtractError(f"claude CLI 未找到: {config.CLAUDE_BIN}") from e
-    except subprocess.TimeoutExpired as e:
-        raise ExtractError("claude CLI 超时") from e
-    if proc.returncode != 0:
-        raise ExtractError(f"claude CLI 退出码 {proc.returncode}: {proc.stderr[:300]}")
-    try:
-        env = json.loads(proc.stdout)
+        env = json.loads(out)
     except json.JSONDecodeError as e:
-        raise ExtractError(f"claude CLI 输出非 JSON: {proc.stdout[:200]}") from e
+        raise ExtractError(f"claude CLI 输出非 JSON: {out[:200]}") from e
     return env.get("result") or env.get("text") or ""
 
 

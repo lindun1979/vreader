@@ -76,7 +76,7 @@ def _transcribe_gladia(video_path: str, key: str) -> str:
         subprocess.run(
             [config.FFMPEG_BIN, "-y", "-i", video_path, "-vn", "-ac", "1", "-ar", "16000",
              "-b:a", "64k", mp3],
-            check=True, capture_output=True)
+            check=True, capture_output=True, timeout=config.FFMPEG_TIMEOUT_S)
         audio_url = _gladia_upload(mp3, key)
     except Exception as e:
         raise GladiaError(f"上传失败: {e}") from e
@@ -132,7 +132,7 @@ def extract_wav(video_path: str, wav_path: str) -> str:
     subprocess.run(
         [config.FFMPEG_BIN, "-y", "-i", video_path, "-vn", "-ac", "1", "-ar", "16000",
          "-f", "wav", wav_path],
-        check=True, capture_output=True)
+        check=True, capture_output=True, timeout=config.FFMPEG_TIMEOUT_S)
     return wav_path
 
 
@@ -167,7 +167,7 @@ def transcribe(wav_path: str) -> str:
             subprocess.run(
                 [config.FFMPEG_BIN, "-y", "-ss", str(offset), "-t", str(_CHUNK_S),
                  "-i", wav_path, "-ac", "1", "-ar", "16000", "-f", "wav", chunk],
-                check=True, capture_output=True)
+                check=True, capture_output=True, timeout=config.FFMPEG_TIMEOUT_S)
             parts.append(_transcribe_file(chunk))
             offset += _CHUNK_S
     finally:

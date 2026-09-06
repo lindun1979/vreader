@@ -10,7 +10,7 @@ def test_queue_full_rejects(data_dir, monkeypatch):
     db.init(dbp)
     c = db.connect(dbp)
     monkeypatch.setattr(config, "MAX_QUEUE", 2)
-    monkeypatch.setattr(douyin, "resolve_aweme_id", lambda t: t.strip().rsplit("/", 1)[-1])
+    monkeypatch.setattr(douyin, "resolve_aweme_id", lambda t, **k: t.strip().rsplit("/", 1)[-1])
     monkeypatch.setattr(douyin, "fetch_detail", lambda a: {"desc": "x", "video": {}})
     # 填到上限
     for i in range(2):
@@ -27,7 +27,7 @@ def test_duplicate_ingest_idempotent(data_dir, monkeypatch):
     service._DB_PATH = dbp
     db.init(dbp)
     c = db.connect(dbp)
-    monkeypatch.setattr(douyin, "resolve_aweme_id", lambda t: "same_id")
+    monkeypatch.setattr(douyin, "resolve_aweme_id", lambda t, **k: "same_id")
     monkeypatch.setattr(douyin, "fetch_detail", lambda a: {"desc": "x", "video": {}})
     code, r1 = service.handle_ingest(c, {"text": "https://x/1", "chat_id": "c", "sender_id": "s"})
     assert "已收到" in r1
@@ -55,7 +55,7 @@ def test_low_disk_rejects_ingest(data_dir, monkeypatch):
     service._DB_PATH = dbp
     db.init(dbp)
     c = db.connect(dbp)
-    monkeypatch.setattr(douyin, "resolve_aweme_id", lambda t: "vid_lowdisk")
+    monkeypatch.setattr(douyin, "resolve_aweme_id", lambda t, **k: "vid_lowdisk")
     monkeypatch.setattr(service, "_disk_free_gb", lambda: config.MIN_DISK_GB - 1)
     code, reply = service.handle_ingest(c, {"text": "https://x/1", "chat_id": "c", "sender_id": "s"})
     assert code == 200 and "磁盘空间不足" in reply

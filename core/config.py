@@ -75,6 +75,8 @@ FFMPEG_TIMEOUT_S = int(get("VREADER_FFMPEG_TIMEOUT_S", "600"))
 # 健康判定阈值（C5）
 OUTBOX_STALE_S = 3600          # 最老未送达通知 > 此值 → 不健康
 HEALTH_STALE_BEAT_S = 90       # 线程心跳超此未更新且非在执行 → 视为线程死
+# ingest ACK 预算（C4/2h）：短链 resolve 的 socket 超时上限，卡住即快速失败
+ACK_RESOLVE_TIMEOUT_S = float(get("VREADER_ACK_RESOLVE_TIMEOUT_S", "2.0"))
 
 
 def channel_dir(channel: str) -> Path:
