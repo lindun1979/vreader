@@ -13,7 +13,9 @@
 - 提取 LLM：生产机 :8317 cliproxy 的 **gemini-2.5-flash**（主，91% 准；40 rpd），
   兜底 gemini-3.1-flash-lite（快但 71%）；配 LLM_MODEL/LLM_MODEL_FALLBACK。得分驱动
   （LLM 只提 score，代码反推 solved/rounds）。标题作对战名单提召回。
-- ASR：SenseVoiceSmall（CPU）。长视频**必须分块**转写（整段喂入峰值 10GB+ 拖垮 16G 机）。
+- ASR：**Gladia 云转写主**（gold 97 格 100% vs SenseVoice 89.7%，~11s/条，带 models.yml
+  热词；GLADIA_API_KEY 配 .env，免费 10h/月），失败自动回落本地 SenseVoiceSmall（CPU）。
+  SenseVoice 长视频**必须分块**转写（整段喂入峰值 10GB+ 拖垮 16G 机）。
 - 存储：SQLite（tasks / notification_outbox / record_decisions），WAL、每线程独立连接。
 
 ## 关键不变量（勿破坏）

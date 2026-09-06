@@ -39,6 +39,9 @@ CLAUDE_BIN = get("CLAUDE_BIN", "claude")
 FFMPEG_BIN = get("FFMPEG_BIN", "ffmpeg")
 ADMIN_SENDER_ID = get("VREADER_ADMIN_SENDER_ID", "")
 
+# Gladia 云 ASR key（主转写通道；空 = 只用本地 SenseVoice）
+GLADIA_API_KEY = get("GLADIA_API_KEY", "")
+
 # 提取 LLM 后端：openai（:8317 cliproxy，默认）| claude（本地 CLI 兜底）
 LLM_BACKEND = get("LLM_BACKEND", "openai")
 LLM_BASE_URL = get("LLM_BASE_URL", "http://127.0.0.1:8317/v1")
