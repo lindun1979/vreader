@@ -1,5 +1,6 @@
 # 凭据与本地部署细节（public 仓纪律）
 .env
+.env.bak*
 DEPLOY.local.md
 *cookies*.txt
 
