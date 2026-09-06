@@ -1,6 +1,5 @@
 import json
 
-import pytest
 
 from core import extract
 
@@ -27,10 +26,18 @@ def test_valid_extract_passes():
     assert ex["extractor_version"] and ex["prompt_hash"]
 
 
+def _assert_no_content(ex, n_dropped=1):
+    assert ex["records"] == []
+    assert ex.get("no_content") is True
+    assert ex["dropped_count"] == n_dropped
+    assert len(ex["dropped"]) == n_dropped and ex["dropped"][0]["reason"]
+
+
 def test_score_out_of_range_dropped():
-    # 青铜满分 1，score=2 越界 → 丢弃 → 无有效记录
-    with pytest.raises(extract.ExtractError):
-        extract.build_extract(aweme_id="v1", title="t", transcript=TX, claude_text=_claude([_rec(score=2)]))
+    # 青铜满分 1，score=2 越界 → 丢弃 → 无有效记录 → no_content（不再抛错，2d）
+    ex = extract.build_extract(aweme_id="v1", title="t", transcript=TX,
+                               claude_text=_claude([_rec(score=2)]))
+    _assert_no_content(ex)
 
 
 def test_gold_score_derives_rounds():
@@ -40,20 +47,23 @@ def test_gold_score_derives_rounds():
     assert ex["records"][0]["solved"] is True and ex["records"][0]["rounds"] == 2  # 黄金 score1=第2轮
 
 
-def test_bad_bug_level_rejected():
-    with pytest.raises(extract.ExtractError):
-        extract.build_extract(aweme_id="v1", title="t", transcript=TX, claude_text=_claude([_rec(bug_level="史诗")]))
+def test_bad_bug_level_dropped_no_content():
+    ex = extract.build_extract(aweme_id="v1", title="t", transcript=TX,
+                               claude_text=_claude([_rec(bug_level="史诗")]))
+    _assert_no_content(ex)
 
 
-def test_extra_field_rejected():
-    with pytest.raises(extract.ExtractError):
-        extract.build_extract(aweme_id="v1", title="t", transcript=TX,
-                              claude_text=_claude([_rec(malicious="drop table")]))
+def test_extra_field_dropped_no_content():
+    # 恶意/多余字段使 record schema 校验失败 → 丢弃（不入榜）
+    ex = extract.build_extract(aweme_id="v1", title="t", transcript=TX,
+                               claude_text=_claude([_rec(malicious="drop table")]))
+    _assert_no_content(ex)
 
 
-def test_empty_records_rejected_by_minitems():
-    with pytest.raises(extract.ExtractError):
-        extract.build_extract(aweme_id="v1", title="t", transcript=TX, claude_text=_claude([]))
+def test_empty_records_no_content():
+    # 空 records（视频无对战内容）→ no_content 成功，不抛错（2d）
+    ex = extract.build_extract(aweme_id="v1", title="t", transcript=TX, claude_text=_claude([]))
+    assert ex["records"] == [] and ex.get("no_content") is True
 
 
 def test_json_in_code_fence_parsed():

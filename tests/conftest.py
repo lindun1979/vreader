@@ -18,18 +18,29 @@ def data_dir(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def conn(data_dir):
+def conn(data_dir, monkeypatch):
     from core import db, service
     dbp = str(data_dir / "vreader.db")
-    monkeypatch_dbpath(service, dbp)
+    monkeypatch.setattr(service, "_DB_PATH", dbp)  # 真 monkeypatch：测试后自动恢复
     db.init(dbp)
     c = db.connect(dbp)
     yield c
     c.close()
 
 
-def monkeypatch_dbpath(service, path):
-    service._DB_PATH = path
+@pytest.fixture(autouse=True)
+def _reset_service_health():
+    """隔离 service 模块级共享健康态（避免测试间串扰）。"""
+    yield
+    try:
+        from core import service
+        service._health_set(
+            worker_alive=False, worker_last_beat=0.0, worker_last_claim_at=0.0,
+            worker_busy_until=0.0, outbox_alive=False, outbox_last_beat=0.0,
+            db_consec_errors=0, paused_asr_orphan=False)
+        service._DB_PATH = None
+    except Exception:  # noqa: BLE001
+        pass
 
 
 @pytest.fixture

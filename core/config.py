@@ -38,6 +38,8 @@ CLAUDE_BIN = get("CLAUDE_BIN", "claude")
 # deploy/launchd-cron-env-not-inherited）。生产 .env 写 /usr/local/bin/ffmpeg。
 FFMPEG_BIN = get("FFMPEG_BIN", "ffmpeg")
 ADMIN_SENDER_ID = get("VREADER_ADMIN_SENDER_ID", "")
+# 运维告警投递目标 chat（低磁盘/孤儿暂停等）；空 = 仅记日志不发飞书
+ADMIN_CHAT_ID = get("VREADER_ADMIN_CHAT_ID", "")
 
 # Gladia 云 ASR key（主转写通道；空 = 只用本地 SenseVoice）
 GLADIA_API_KEY = get("GLADIA_API_KEY", "")

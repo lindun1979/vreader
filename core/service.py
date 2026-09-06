@@ -86,6 +86,31 @@ def verify(ts: str, sig: str, raw_body: bytes) -> bool:
 
 # ---------- 纯逻辑处理器 ----------
 
+_last_disk_alert = 0.0
+_DISK_ALERT_INTERVAL = 3600  # 低磁盘告警限频：每小时最多一次
+
+
+def _disk_free_gb() -> float:
+    import shutil
+    return shutil.disk_usage(str(config.DATA_DIR)).free / (1024 ** 3)
+
+
+def _maybe_disk_alert(conn) -> None:
+    global _last_disk_alert
+    now = time.time()
+    if now - _last_disk_alert < _DISK_ALERT_INTERVAL:
+        return
+    _last_disk_alert = now
+    msg = (f"⚠️ vreader 磁盘不足 {_disk_free_gb():.1f}GB < {config.MIN_DISK_GB}GB，"
+           f"已暂停处理并拒收新任务。")
+    print(f"[disk] {msg}", flush=True)
+    if config.ADMIN_CHAT_ID:
+        try:
+            db.enqueue_notification(conn, config.ADMIN_CHAT_ID, msg)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def handle_ingest(conn, payload: dict) -> tuple[int, str]:
     text = (payload.get("text") or "").strip()
     chat_id = payload.get("chat_id") or ""
@@ -97,6 +122,8 @@ def handle_ingest(conn, payload: dict) -> tuple[int, str]:
     existing = db.get_task(conn, aweme_id)
     if existing:
         return 200, f"这条视频已在处理/已完成（当前状态：{existing['status']}）"
+    if _disk_free_gb() < config.MIN_DISK_GB:  # 磁盘门禁（C4）：不足则拒收新任务
+        return 200, "磁盘空间不足，暂时无法接收新任务，请稍后再试。"
     if db.count_active(conn) >= config.MAX_QUEUE:
         return 200, "队列已满，请稍后再发。"
     try:
@@ -268,6 +295,11 @@ def worker_loop(stop: threading.Event, idle_s: float = 2.0) -> None:
                     _db_error()
                     stop.wait(idle_s)
                     continue
+            if _disk_free_gb() < config.MIN_DISK_GB:  # 磁盘门禁：暂停处理（不判死）+ 限频告警
+                _maybe_disk_alert(conn)
+                _health_set(worker_busy_until=0.0)
+                stop.wait(idle_s * 5)
+                continue
             _health_set(worker_last_claim_at=time.time())
             try:
                 task = db.claim_next(conn)
@@ -286,6 +318,7 @@ def worker_loop(stop: threading.Event, idle_s: float = 2.0) -> None:
             _health_set(worker_busy_until=time.time() + config.TASK_BUDGET_S)
             try:
                 pipeline.process_task(conn, task)
+                pipeline.sweep_orphan_media(conn)  # 终态后顺带孤儿清扫
                 _db_ok()
             except Exception as e:  # noqa: BLE001 兜底：process 未自处理的异常
                 try:
@@ -359,6 +392,9 @@ def serve() -> None:
     try:
         recovered = db.recover_nonterminal(conn)
         db.expire_old_pending(conn, config.PENDING_EXPIRE_DAYS * 86400)
+        swept = pipeline.sweep_orphan_media(conn)  # 启动孤儿媒体清扫（C4）
+        if swept:
+            print(f"vreader startup: swept {swept} orphan media files")
     finally:
         conn.close()
     stop = threading.Event()

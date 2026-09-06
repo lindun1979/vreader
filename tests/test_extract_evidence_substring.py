@@ -1,6 +1,5 @@
 import json
 
-import pytest
 
 from core import extract
 
@@ -20,10 +19,12 @@ def test_evidence_substring_ok():
     assert ex["records"][0]["rounds"] == 2
 
 
-def test_evidence_not_in_transcript_rejected():
-    with pytest.raises(extract.ExtractError):
-        extract.build_extract(aweme_id="v", title="t", transcript=TX,
-                              claude_text=_one("它一次就完美解决了所有问题"))  # 转写里没有
+def test_evidence_not_in_transcript_dropped():
+    # 伪证据（非转写子串）→ 丢弃 → 无有效记录 → no_content（不入榜，2d）
+    ex = extract.build_extract(aweme_id="v", title="t", transcript=TX,
+                               claude_text=_one("它一次就完美解决了所有问题"))
+    assert ex["records"] == [] and ex.get("no_content") is True
+    assert ex["dropped"][0]["reason"] == "evidence 非转写子串"
 
 
 def test_evidence_whitespace_normalized():

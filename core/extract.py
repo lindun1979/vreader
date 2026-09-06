@@ -291,27 +291,23 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
         # 由得分反推 solved/rounds（确定性，不靠 LLM 算）
         level, score = r.get("bug_level"), r.get("score")
         if not isinstance(score, int):
-            dropped.append((r, f"score 非整数: {score}"))
+            dropped.append({"record": r, "reason": f"score 非整数: {score}"})
             continue
         solved, rounds = derive_solved_rounds(level, score)
         if solved is None:
-            dropped.append((r, f"{level} score={score} 越界"))
+            dropped.append({"record": r, "reason": f"{level} score={score} 越界"})
             continue
         r["solved"], r["rounds"] = solved, rounds
         # 逐记录校验：坏记录丢弃（不入榜），不拖垮整条视频
         rerrs = sorted(_record_validator.iter_errors(r), key=lambda e: list(e.path))
         if rerrs:
-            dropped.append((r, rerrs[0].message))
+            dropped.append({"record": r, "reason": rerrs[0].message})
             continue
         # 证据必须是转写子串（归一化后）
         if _normalize_quote(r.get("evidence_quote", "")) not in norm_tx:
-            dropped.append((r, "evidence 非转写子串"))
+            dropped.append({"record": r, "reason": "evidence 非转写子串"})
             continue
         records.append(r)
-
-    if not records:
-        reason = dropped[0][1] if dropped else "无记录"
-        raise ExtractError(f"无有效记录（丢弃 {len(dropped)} 条，首因: {reason}）")
 
     extract = {
         "video_id": aweme_id,
@@ -322,10 +318,14 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
         "asr_model": _asr_model_id(),
         "records": records,
         "dropped_count": len(dropped),
+        "dropped": dropped,
     }
+    # 空 records 不再当失败重试（agy M-02/cf5#11）：显式 no_content 终态成功；
+    # dropped 明细落盘供人工审计（dup≠dropped：dup 是重复合并，dropped 是校验丢弃）。
+    if not records:
+        extract["no_content"] = True
     # 兜底整体校验（envelope）
-    errs = sorted(_validator.iter_errors({k: v for k, v in extract.items() if k != "dropped_count"}),
-                  key=lambda e: list(e.path))
+    errs = sorted(_validator.iter_errors(extract), key=lambda e: list(e.path))
     if errs:
         raise ExtractError(f"extract schema 校验失败: {errs[0].message}")
     return extract

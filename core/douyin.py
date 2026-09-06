@@ -156,6 +156,7 @@ def download(aweme_id: str, dest_path: str, *, detail: dict | None = None) -> di
     meta = meta_from_detail(detail)
     if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
         meta["skipped"] = True
+        meta["bytes"] = os.path.getsize(dest_path)  # 跳过分支也报字节，供超限校验
         return meta
     ttwid = _get_ttwid()
     last_err: Exception | None = None
