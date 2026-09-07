@@ -17,7 +17,7 @@ from jsonschema import Draft202012Validator
 
 from . import config, db, models as models_mod
 
-EXTRACTOR_VERSION = "token_bug/1"
+EXTRACTOR_VERSION = "token_bug/2"
 SCHEMA_REV = 2
 _CH_DIR = config.ROOT / "channels" / "token_bug"
 _PROMPT_PATH = _CH_DIR / "extract_prompt.md"

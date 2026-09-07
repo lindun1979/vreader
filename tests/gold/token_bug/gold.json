@@ -3,6 +3,7 @@
   "videos": [
     {
       "link": "https://v.douyin.com/y2XnlzEwwRc/",
+      "aweme_id": "7681587976547208511",
       "title": "Fable5.1和GLM5.3 D组第一轮",
       "bugs": [
         "S005",
@@ -34,6 +35,7 @@
     },
     {
       "link": "https://v.douyin.com/DMMOMDIFnso/",
+      "aweme_id": "7680800300034264335",
       "title": "中年K3大战青年Grok4.6",
       "bugs": [
         "S003",
@@ -65,6 +67,7 @@
     },
     {
       "link": "https://v.douyin.com/APNAtxERAVQ/",
+      "aweme_id": "7679734900181830912",
       "title": "Flash大乱斗",
       "bugs": [
         "S002",
@@ -101,6 +104,7 @@
     },
     {
       "link": "https://v.douyin.com/pmYNxOxzbVQ/",
+      "aweme_id": "7679001767970917659",
       "title": "SHI山B组第一轮 DeepSeek/Opus Gemini/Hy3.0",
       "bugs": [
         "S004",
@@ -132,6 +136,7 @@
     },
     {
       "link": "https://v.douyin.com/Y3bEB3CHKgA/",
+      "aweme_id": "7677918580511362354",
       "title": "MuseSpark1.2 秋季赛",
       "bugs": [
         "S002",
@@ -168,6 +173,7 @@
     },
     {
       "link": "https://v.douyin.com/VVuUgYnvpdE/",
+      "aweme_id": "7674603493314923830",
       "title": "开源闭源大决战",
       "bugs": [
         "B001",
@@ -252,5 +258,6 @@
         }
       }
     }
-  ]
+  ],
+  "_aweme_id_note": "aweme_id 为短链离线人工核对映射（进仓，供 ops/eval_gold.py 比较键）"
 }

@@ -14,9 +14,16 @@
   96/97≈99%；LLM_BACKEND=agy，直连不通须配 AGY_PROXY 代理，见 [[agy-on-prod-via-proxy]]），
   兜底 :8317 cliproxy 的 gemini-3.5-flash-lite（gold 86.6%）；配 LLM_MODEL/LLM_MODEL_FALLBACK。
   得分驱动（LLM 只提 score，代码反推 solved/rounds）。标题作对战名单提召回。
-  别名表命中优先于 LLM 猜测；模型归一靠**版本号数字**——「国模一哥/一哥」是博主对
-  GLM 系【当时最新】版本的动态称呼（5.2 期=GLM-5.2、5.3 期=GLM-5.3），勿把"一哥"绑
-  某版本号（见 memory glm-yige-dynamic-reference）。
+- 模型归一（**series-norm**，见 `core/models.py` + `docs/plans/vreader-series-norm-plan-v5.md`）：
+  `models.yml` 是**系列表**（format 身份模板 + 系列别名 + 两级昵称 + 变体 + seed 版本）。
+  LLM 出 `model_raw/series/version/variant`（**不出 canonical，均不可信**）；代码对
+  transcript+title 做「提及锚定」（`build_anchors`）产出 `(series,version[,variant])` 锚点，
+  `resolve_record` 六步（raw 拆词纠错 → 版本锚定核验 → 系列纠正 → 共指兜底 → 组合锚定总闸
+  → `compose_canonical` round-trip 撞名校验）拼出 canonical。version 靠源文本数字，不靠昵称
+  （「一哥/火星刺客」随期指系列当时最新版本，只绑系列；见 [[glm-yige-dynamic-reference]]）。
+  未见过版本首次出现 → `pending_new_version`，`vr确认` 同事务 `register_known_version`
+  入 `known_versions` 表（三入口：批量/冲突赢家/rev）。extract 带 `schema_rev=2`；旧产物
+  （无 schema_rev）canonical 须 ∈ 冻结 `LEGACY_CANONICALS`，`validate_extract` 双轨判。
 - ASR：**Gladia 云转写主**（gold 97 格 100% vs SenseVoice 89.7%，~11s/条，带 models.yml
   热词；GLADIA_API_KEY 配 .env，免费 10h/月），失败自动回落本地 SenseVoiceSmall（CPU）。
   SenseVoice 长视频**必须分块**转写（整段喂入峰值 10GB+ 拖垮 16G 机）。
@@ -28,7 +35,10 @@
 - record_id = `model_key`（未知模型用 raw 归一）＋`bug_slot`（空 bug_id 用 evidence 指纹）
   ＋难度＋score 的指纹，**不含 confidence**、顺序无关；`auto_ok` 每次按 confidence 重判，
   `approved`/`rejected_conflict` 凭指纹继承恒存（`rejected_conflict` 缺失不 stale）；
-  三态待确认 pending/pending_unknown/pending_conflict，board 只渲染 auto_ok+approved。
+  四态待确认 pending/pending_unknown/pending_conflict/pending_new_version，board 只渲染 auto_ok+approved。
+- known_versions 读消费点（prompt 注入、Gladia 热词、决策判定）开只读短连接读已提交集合；
+  决策时点集合 B 由入口在 `publish_lock` 内读好传 `apply_decisions(known=...)`；提取输入集合 A
+  写入 `known_versions_used`（**永不改写**），决策快照写 `known_versions_used_at_decision`（M08）。
 - 提取输出必须过 schema + evidence_quote 是 transcript 子串，否则丢弃（全丢→no_content
   成功，不当失败重试）；缓存 extract.json 读回也必过 `validate_extract`，坏则留证重建。
 - 单实例执行权：数据目录 flock（serve 最先取），CLI 写路径同锁，`--board` 纯读不取锁。
@@ -44,10 +54,15 @@ reprocess/迁移等 CLI 写操作需 flock，**必须先 `launchctl unload` 停 
 launchd 管理（禁 nohup），登记运维斯 SERVICES.md。
 
 ## 测试
-`pytest -q`（94 项全绿）。手动处理：`python -m core.cli "<链接>"`；重跑提取：`--reprocess <id>`；
-强制用 Gladia 重转（修此前落兜底 ASR 的数据，删 transcript 走全量管线）：`--retranscribe <id>`。
-真值集：`tests/gold/token_bug/gold.json`（用户人工标注 7 视频得分，进仓）；
-准确率评测脚本思路见开发记录（提取 vs 真值按 模型×等级 比对）。
+`pytest -q`（177 项全绿，**只在研发机跑**；生产机不跑 pytest）。手动处理：
+`python -m core.cli "<链接>"`；重跑提取：`--reprocess <id>`；强制用 Gladia 重转（修此前落
+兜底 ASR 的数据，删 transcript 走全量管线）：`--retranscribe <id>`。
+真值集：`tests/gold/token_bug/gold.json`（用户人工标注 7 视频得分 + aweme_id 映射，进仓）；
+准确率评测（只读，隔离副本）：`python ops/eval_gold.py <data副本> --min-extract 96`
+（比较键 aweme_id×canonical×bug_id，缺格/多报/重复/冲突全计错，双口径 + 逐格 diff）。
+升级/回滚运维手册：`docs/ops-series-norm-upgrade-rollback.md`（快照清单 + 有界回滚 +
+撤销登记≠撤销批准）；上游透传补丁：`docs/skill_router-vreader-help-detail-confirm.patch`
+（验收 `ops/verify_upstream_routing.py <life-assistant-checkout>`）。
 
 ## 纪律
 public 仓：凭据→.env，内网细节→DEPLOY.local.md，版权数据→data/，均 gitignore。
