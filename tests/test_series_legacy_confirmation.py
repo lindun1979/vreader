@@ -45,11 +45,12 @@ def test_legacy_conflict_member_confirm_no_register(conn):
     _write(aid, ex)
     ex_mod.apply_decisions(conn, aid, ex, known=db.list_known_versions(conn))
     rid1 = ex_mod.record_id(aid, r1)
+    n_before = len(db.list_known_versions(conn))
     assert db.get_decision(conn, rid1)["decision"] == db.PENDING_CONFLICT
     ok, msg = ex_mod.confirm_conflict_member(conn, aid, rid1[:8], "admin")
     assert ok and "已登记新版本" not in msg  # legacy 记录不登记
     # known 未新增
-    assert len(db.list_known_versions(conn)) == 22
+    assert len(db.list_known_versions(conn)) == n_before
 
 
 def test_v2_envelope_with_old_shape_record_rejected_zero_writes(conn):

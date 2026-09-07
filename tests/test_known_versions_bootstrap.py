@@ -10,9 +10,12 @@ def test_init_seeds_all_legacy_triples(db_path):
     db.init(db_path)
     c = db.connect(db_path)
     kv = db.list_known_versions(c)
-    # seed 三元组拼合结果恰等于冻结 legacy 名单
     comp = {models.compose_canonical(s, v, var) for s, v, var in kv}
-    assert comp == set(models.LEGACY_CANONICALS)
+    # 冻结 legacy 名单全部仍在 seed 中（新增模型是超集）
+    assert set(models.LEGACY_CANONICALS) <= comp
+    # 用户 2026-09 新增的模型也在 seed
+    for new in ["Claude Opus 4.8", "Fable 5", "GPT 5.6 Sol", "GPT 5.6 Terra"]:
+        assert new in comp
     c.close()
 
 

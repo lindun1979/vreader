@@ -45,9 +45,11 @@ def test_title_only_mention_anchors():
         ("Grok 4.6", "Grok", "4.6", "")
 
 
-def test_opus_original_mention_maps_to_5():
-    # 原文提及 4.8 → 按 4.8 验证邻接，再映射存 "5"
-    assert _resolve("opus", "Claude Opus", "5", "", "测试 opus 4.8 解题") == \
+def test_opus_4_8_is_distinct_model():
+    # Opus 4.8 与 Opus 5 是不同模型（用户 2026-09 确认，version_map 已去 4.8→5）
+    assert _resolve("opus", "Claude Opus", "4.8", "", "测试 opus 4.8 解题") == \
+        ("Claude Opus 4.8", "Claude Opus", "4.8", "")
+    assert _resolve("opus", "Claude Opus", "5", "", "测试 opus 5 解题") == \
         ("Claude Opus 5", "Claude Opus", "5", "")
 
 

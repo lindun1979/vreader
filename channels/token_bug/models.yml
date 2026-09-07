@@ -93,14 +93,16 @@ Longcat:
 
 Fable:
   format: "Fable {v}"
-  aliases: [fable, claude fable, 飞包, 费波]
-  seed_versions: ["5.1"]
+  # Fable 5 与 Fable 5.1 是**不同模型**（用户 2026-09 确认）；含 ASR 糊写 飞波/飞宝/飛鮑/feber
+  aliases: [fable, claude fable, feber, 飞包, 飞波, 飞宝, 飛鮑, 费波]
+  seed_versions: ["5.1", "5"]
 
 Claude Opus:
   format: "Claude Opus {v}"
-  aliases: [claude opus, opus, 克劳德]
-  version_map: {"4.8": "5", "5.0": "5"}
-  seed_versions: ["5"]
+  aliases: [claude opus, opus, ops, 克劳德]
+  # Opus 4.8 与 5.0 是**不同模型**（用户 2026-09 确认，勿再并入）；仅 5.0→5 归一（同款写法）
+  version_map: {"5.0": "5"}
+  seed_versions: ["5", "4.8"]
 
 Claude Sonnet:
   format: "Claude Sonnet {v}"
@@ -110,10 +112,15 @@ Claude Sonnet:
 GPT:
   format: "GPT {v}"
   aliases: [gpt, gbt, 芝麻开门]
+  # GPT 5.6 有三个变体：Sol / Terra / Luna（用户 2026-09 确认）。Sol 含 ASR 糊写 soul/soap
   variants:
     Luna:
-      aliases: [luna]
-  seed_variant_versions: {Luna: ["5.6"]}
+      aliases: [luna, 露娜]
+    Sol:
+      aliases: [sol, soul, soap]
+    Terra:
+      aliases: [terra, tera]
+  seed_variant_versions: {Luna: ["5.6"], Sol: ["5.6"], Terra: ["5.6"]}
 
 Gemini:
   format: "Gemini {v}"

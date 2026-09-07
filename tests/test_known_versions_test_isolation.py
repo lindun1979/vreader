@@ -30,7 +30,7 @@ def test_seed_and_known_reads_go_to_tmp(db_path):
     c = db.connect(db_path)
     # 打开的库路径在 tmp（config.DATA_DIR）下
     assert str(config.DATA_DIR) in db_path
-    assert len(db.list_known_versions(c)) == 22
+    assert len(db.list_known_versions(c)) >= 22  # 至少 legacy 基线（新增模型是超集）
     c.close()
 
 

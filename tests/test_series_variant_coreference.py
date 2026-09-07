@@ -98,3 +98,31 @@ def test_known_never_overrides_spoken_version():
     known = _seed_known()
     assert _resolve("grok4.5", "", "", "", "grok4.5 出场", known=known) == \
         ("Grok 4.5", "Grok", "4.5", "")
+
+
+# ---------- 2026-09 用户新增模型：Opus 4.8 / Fable 5 / GPT Sol·Terra ----------
+
+def test_gpt_three_variants_distinct():
+    known = _seed_known()
+    assert _resolve("GPT5.6soul", "", "", "", "gpt5.6soul 出场", known=known)[0] == "GPT 5.6 Sol"
+    assert _resolve("GPT5.6terra", "", "", "", "gpt5.6terra 出场", known=known)[0] == "GPT 5.6 Terra"
+    assert _resolve("GPT5.6luna", "", "", "", "gpt5.6luna 出场", known=known)[0] == "GPT 5.6 Luna"
+
+
+def test_bug_id_glued_model_anchors():
+    # ASR 常把 bug 编号与模型连写（S001GPT5.6soul）→ 仍能锚定 GPT 5.6 Sol
+    known = _seed_known()
+    assert _resolve("GPT5.6soul", "GPT", "5.6", "Sol",
+                    "S001GPT5.6soul的修复结果 G003GPT5.6SOAP第二轮", known=known)[0] == "GPT 5.6 Sol"
+
+
+def test_opus_4_8_and_5_distinct():
+    known = _seed_known()
+    assert _resolve("Opus4.8", "", "", "", "opus4.8 上场", known=known)[0] == "Claude Opus 4.8"
+    assert _resolve("opus5", "", "", "", "opus5 上场", known=known)[0] == "Claude Opus 5"
+
+
+def test_fable_5_and_5_1_distinct():
+    known = _seed_known()
+    assert _resolve("飞包5", "", "", "", "飞包5 出场", known=known)[0] == "Fable 5"
+    assert _resolve("fable5.1", "", "", "", "fable5.1 出场", known=known)[0] == "Fable 5.1"

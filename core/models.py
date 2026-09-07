@@ -186,15 +186,16 @@ def build_anchors(transcript: str, title: str = "",
         var_words = sorted(var_word_to_name, key=len, reverse=True)
         var_alt = "|".join(re.escape(w) for w in var_words) if var_words else None
 
-        # 裸系列出现（alias token 作为词出现）
-        if re.search(rf"(?<![a-z0-9])(?:{alias_alt})", src):
+        # 裸系列出现（alias token 作为词出现）。前缀允许接在数字后（ASR 常把 bug 编号与
+        # 模型名连写，如 S001GPT5.6soul）——用 (?<![a-z]) 而非 (?<![a-z0-9])。
+        if re.search(rf"(?<![a-z])(?:{alias_alt})", src):
             series_seen.add(series)
 
         # 版本锚点：alias + 连接符 + [版本字母] + 数字（+ 可选紧邻变体词）
         if var_alt:
-            ver_pat = rf"(?<![a-z0-9])(?:{alias_alt}){_CJK_SEP}{vlet_re}(?P<v>{_VER_RE})(?:{_CJK_SEP}(?P<var>{var_alt}))?"
+            ver_pat = rf"(?<![a-z])(?:{alias_alt}){_CJK_SEP}{vlet_re}(?P<v>{_VER_RE})(?:{_CJK_SEP}(?P<var>{var_alt}))?"
         else:
-            ver_pat = rf"(?<![a-z0-9])(?:{alias_alt}){_CJK_SEP}{vlet_re}(?P<v>{_VER_RE})"
+            ver_pat = rf"(?<![a-z])(?:{alias_alt}){_CJK_SEP}{vlet_re}(?P<v>{_VER_RE})"
         for m in re.finditer(ver_pat, src):
             v = m.group("v")
             versions.setdefault(series, set()).add(v)  # 版本邻接（步骤2 核验用，含变体提及）
@@ -257,10 +258,10 @@ def _match_series_from_raw(raw: str, data: dict) -> tuple[str | None, str]:
     for tok, s, var in tokens:
         if not tok:
             continue
-        # 拉丁 token：前不接字母数字；后允许接版本字母+数字（deepthickv4）——用「不接
-        # 连续 ≥2 字母」放行单个版本字母 v/k，同时挡住 gm→gmail 这类词内误命中。
+        # 拉丁 token：前不接字母（允许紧跟版本数字后，如 gpt5.6soul 的 soul）；后不接
+        # 连续 ≥2 字母（放行单个版本字母 v/k，挡住 gm→gmail 词内误命中）。
         if re.search(r"[a-z0-9]", tok):
-            hit = re.search(rf"(?<![a-z0-9]){re.escape(tok)}(?![a-z]{{2}})", src) is not None
+            hit = re.search(rf"(?<![a-z]){re.escape(tok)}(?![a-z]{{2}})", src) is not None
         else:
             hit = tok in src
         if hit:

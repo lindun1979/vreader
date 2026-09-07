@@ -23,10 +23,18 @@ def test_all_legacy_canonicals_compose_byte_equal():
     assert got == set(models.LEGACY_CANONICALS)
 
 
-def test_opus_version_map_collapses_to_5():
-    assert models.compose_canonical("Claude Opus", "4.8") == "Claude Opus 5"
+def test_opus_version_map_only_5_0_collapses():
+    # 4.8 与 5.0 是不同模型（用户确认）；仅 5.0→5 归一
+    assert models.compose_canonical("Claude Opus", "4.8") == "Claude Opus 4.8"
     assert models.compose_canonical("Claude Opus", "5.0") == "Claude Opus 5"
     assert models.compose_canonical("Claude Opus", "5") == "Claude Opus 5"
+
+
+def test_new_taxonomy_canonicals_compose():
+    for c in ["Claude Opus 4.8", "Fable 5", "GPT 5.6 Sol", "GPT 5.6 Terra"]:
+        # round-trip 反解唯一（无撞名）
+        hits = models._reverse_parse_all(c, models.load_series())
+        assert len(hits) == 1, f"{c} 反解不唯一: {hits}"
 
 
 def test_norm_version_rules():
