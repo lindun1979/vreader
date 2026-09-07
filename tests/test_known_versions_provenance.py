@@ -11,7 +11,7 @@ TX = "青铜这题 glm5.3 一次就修对了，全程逻辑清晰表现不错。
 def _claude():
     return json.dumps({"records": [{
         "model_raw": "glm5.3", "model_series": "GLM", "model_version": "5.3", "model_variant": "",
-        "bug_level": "青铜", "bug_id": "B001", "score": 1,
+        "bug_level": "青铜", "bug_id": "B001", "solved_round": 1,
         "evidence_quote": "glm5.3 一次就修对了", "confidence": 0.9}]}, ensure_ascii=False)
 
 

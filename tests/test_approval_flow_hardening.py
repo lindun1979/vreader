@@ -104,7 +104,11 @@ def test_reprocess_keeps_approved(conn, data_dir, monkeypatch):
     db.approve_pending_for_video(conn, aid, "ADMIN")
     rid = ex_mod.record_id(aid, r)
     assert db.get_decision(conn, rid)["decision"] == db.APPROVED
-    # reprocess 用同一 LLM 输出（打桩）重跑，approved 凭指纹继承
-    monkeypatch.setattr(ex_mod, "_call_llm", lambda *a, **k: json.dumps({"records": [r]}, ensure_ascii=False))
+    # reprocess 用同一事实的 LLM 输出（打桩，轮次驱动格式）重跑，approved 凭指纹继承
+    llm_rec = {"model_raw": "GLM-5.3", "model_series": "GLM", "model_version": "5.3",
+               "model_variant": "", "bug_level": "青铜", "bug_id": "B001", "solved_round": 1,
+               "evidence_quote": quote, "confidence": 0.5}
+    monkeypatch.setattr(ex_mod, "_call_llm",
+                        lambda *a, **k: json.dumps({"records": [llm_rec]}, ensure_ascii=False))
     pipeline.reprocess(conn, aid)
     assert db.get_decision(conn, rid)["decision"] == db.APPROVED

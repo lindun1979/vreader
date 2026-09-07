@@ -101,13 +101,29 @@ MAX_SCORE = {"青铜": 1, "白银": 1, "黄金": 2, "钻石": 3, "王者": 3}
 
 
 def derive_solved_rounds(level: str, score: int) -> tuple[bool, int | None]:
-    """由等级+得分确定性反推 (solved, rounds)。得分越界返回 (None,None) 表示无效。"""
+    """【旧轨/legacy 用】由等级+得分反推 (solved, rounds)。得分越界返回 (None,None)。
+    注意：score=0 一律判 not solved——无法区分「第 maxs+1 轮才解出(白做0分)」与「没做对」，
+    这正是 v2 轮次驱动要修的问题（见 derive_from_round）。"""
     maxs = MAX_SCORE.get(level)
     if maxs is None or score < 0 or score > maxs:
         return (None, None)  # type: ignore[return-value]
     if score == 0:
         return (False, None)
     return (True, maxs - score + 1)
+
+
+def derive_from_round(level: str, solved_round: int) -> tuple[bool, int | None, int | None]:
+    """【v2 轮次驱动】由 (等级, 第几轮做对) 反推 (solved, score, rounds)。
+    solved_round: 0=没做对；1..maxs=第 n 轮解出（score=maxs-n+1）；maxs+1=最后一轮才解出
+    （"白做"，已解但 0 分）。越界（<0 或 >maxs+1，或非整数）→ (None,None,None) 表示无效。
+    规则（用户 2026-09 确认）：钻石/王者 1轮=3 2轮=2 3轮=1 4轮=0(已解)；黄金 1轮=2 2轮=1
+    3轮=0(已解)；青铜/白银 1轮=1 2轮=0(已解)；0=没做对。"""
+    maxs = MAX_SCORE.get(level)
+    if maxs is None or not isinstance(solved_round, int) or solved_round < 0 or solved_round > maxs + 1:
+        return (None, None, None)  # type: ignore[return-value]
+    if solved_round == 0:
+        return (False, 0, None)
+    return (True, max(0, maxs - solved_round + 1), solved_round)
 
 
 # bug_id 首字母 → 等级映射（一致性校验；未知前缀不判冲突，避免误伤新命名）
@@ -324,10 +340,18 @@ def validate_extract(extract: dict, *, transcript: str | None = None,
         rerrs = sorted(rec_validator.iter_errors(r), key=lambda e: list(e.path))
         if rerrs:
             raise ExtractError(f"record schema: {rerrs[0].message}")
-        solved, rounds = derive_solved_rounds(r.get("bug_level"), r.get("score"))
-        if solved is None or r.get("solved") != solved or r.get("rounds") != rounds:
-            raise ExtractError(
-                f"solved/rounds 与 score 不一致: {r.get('bug_level')} score={r.get('score')}")
+        if v2:  # 轮次驱动：solved/score/rounds 必须与 solved_round 一致
+            solved, score, rounds = derive_from_round(r.get("bug_level"), r.get("solved_round"))
+            if (solved is None or r.get("solved") != solved
+                    or r.get("score") != score or r.get("rounds") != rounds):
+                raise ExtractError(
+                    f"solved/score/rounds 与 solved_round 不一致: {r.get('bug_level')} "
+                    f"solved_round={r.get('solved_round')}")
+        else:  # legacy：得分驱动
+            solved, rounds = derive_solved_rounds(r.get("bug_level"), r.get("score"))
+            if solved is None or r.get("solved") != solved or r.get("rounds") != rounds:
+                raise ExtractError(
+                    f"solved/rounds 与 score 不一致: {r.get('bug_level')} score={r.get('score')}")
         _validate_canonical(r, v2, data)
         q = _normalize_quote(r.get("evidence_quote", ""))
         if len(q) < 4:
@@ -404,16 +428,16 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
             data=data, known=known)
         r["model_canonical"] = canonical
         r["model_series"], r["model_version"], r["model_variant"] = series, version, variant
-        # 由得分反推 solved/rounds（确定性，不靠 LLM 算）
-        level, score = r.get("bug_level"), r.get("score")
-        if not isinstance(score, int):
-            dropped.append({"record": r, "reason": f"score 非整数: {score}"})
+        # 轮次驱动（v2）：LLM 出「第几轮做对」，代码反推 solved/score/rounds（确定性）
+        level, sr = r.get("bug_level"), r.get("solved_round")
+        if not isinstance(sr, int):
+            dropped.append({"record": r, "reason": f"solved_round 非整数: {sr}"})
             continue
-        solved, rounds = derive_solved_rounds(level, score)
+        solved, score, rounds = derive_from_round(level, sr)
         if solved is None:
-            dropped.append({"record": r, "reason": f"{level} score={score} 越界"})
+            dropped.append({"record": r, "reason": f"{level} solved_round={sr} 越界"})
             continue
-        r["solved"], r["rounds"] = solved, rounds
+        r["solved"], r["score"], r["rounds"] = solved, score, rounds
         # 逐记录校验：坏记录丢弃（不入榜），不拖垮整条视频
         rerrs = sorted(_record_validator_v2.iter_errors(r), key=lambda e: list(e.path))
         if rerrs:

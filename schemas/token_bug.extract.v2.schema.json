@@ -46,7 +46,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["model_canonical", "model_raw", "model_series", "model_version", "model_variant", "bug_level", "bug_id", "score", "rounds", "solved", "evidence_quote", "confidence"],
+        "required": ["model_canonical", "model_raw", "model_series", "model_version", "model_variant", "bug_level", "bug_id", "solved_round", "score", "rounds", "solved", "evidence_quote", "confidence"],
         "properties": {
           "model_canonical": {"type": "string", "minLength": 1},
           "model_raw": {"type": "string"},
@@ -55,6 +55,7 @@
           "model_variant": {"type": "string"},
           "bug_level": {"type": "string", "enum": ["青铜", "白银", "黄金", "钻石", "王者"]},
           "bug_id": {"type": "string"},
+          "solved_round": {"type": "integer", "minimum": 0, "maximum": 4},
           "score": {"type": "integer", "minimum": 0, "maximum": 3},
           "rounds": {"type": ["integer", "null"], "minimum": 1},
           "solved": {"type": "boolean"},

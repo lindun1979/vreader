@@ -21,7 +21,7 @@ def _legacy_extract(vid="v1"):
 def _v2_record():
     return {"model_canonical": "GLM-5.3", "model_raw": "glm5.3", "model_series": "GLM",
             "model_version": "5.3", "model_variant": "", "bug_level": "青铜",
-            "bug_id": "b1", "score": 1, "rounds": 1, "solved": True,
+            "bug_id": "b1", "solved_round": 1, "score": 1, "rounds": 1, "solved": True,
             "evidence_quote": "GLM-5.3 一次就修对了", "confidence": 0.9}
 
 
