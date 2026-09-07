@@ -327,8 +327,10 @@ def load_valid_extract(extract_path: str, *, transcript: str | None = None,
 
 
 def build_extract(*, aweme_id: str, title: str, transcript: str,
-                  claude_text: str | None = None) -> dict:
-    """把 LLM 输出组装为 extract 对象并做全部校验；不写库。校验失败抛 ExtractError。"""
+                  claude_text: str | None = None, asr_model: str | None = None) -> dict:
+    """把 LLM 输出组装为 extract 对象并做全部校验；不写库。校验失败抛 ExtractError。
+    asr_model：显式指定该转写的 ASR 引擎（reprocess 不重转时传原引擎，避免误标默认值）；
+    None 时取 asr 模块最近一次实际转写引擎。"""
     models = _load_models()
     if claude_text is None:
         claude_text = _call_llm(_build_prompt(transcript, title))
@@ -366,7 +368,7 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
         "extracted_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "extractor_version": EXTRACTOR_VERSION,
         "prompt_hash": prompt_hash(),
-        "asr_model": _asr_model_id(),
+        "asr_model": asr_model or _asr_model_id(),
         "records": records,
         "dropped_count": len(dropped),
         "dropped": dropped,

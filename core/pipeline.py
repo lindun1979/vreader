@@ -106,6 +106,15 @@ def _read_if_present(path: str) -> str | None:
     return None
 
 
+def _prior_asr_model(extract_path: str) -> str | None:
+    """reprocess 不重转，保留原 extract 记录的 ASR 引擎；否则 build_extract 会取模块默认
+    值（SenseVoiceSmall）把已用 Gladia 的转写误标成兜底。读不到则 None（回退默认）。"""
+    try:
+        return json.loads(Path(extract_path).read_text(encoding="utf-8")).get("asr_model")
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def _finish(conn, aweme_id: str, chat_id: str, ex: dict, p: dict) -> str:
     """决策重判 + 渲染 + 终态成功 + 清理媒体（恢复捷径与正常路径共用）。"""
     with lock.publish_lock:  # C8 publish_extract：决策写入与渲染对 confirm 原子
@@ -201,7 +210,8 @@ def reprocess(conn, aweme_id: str) -> str:
         raise extract_mod.ExtractError(f"无 transcript，无法重跑：{aweme_id}")
     task = db.get_task(conn, aweme_id)
     title = (task["title"] if task else "") or ""
-    ex = extract_mod.build_extract(aweme_id=aweme_id, title=title, transcript=transcript)
+    ex = extract_mod.build_extract(aweme_id=aweme_id, title=title, transcript=transcript,
+                                   asr_model=_prior_asr_model(p["extract"]))
     util.atomic_write_text(p["extract"], json.dumps(ex, ensure_ascii=False, indent=2))
     with lock.publish_lock:
         counts = extract_mod.apply_decisions(conn, aweme_id, ex)

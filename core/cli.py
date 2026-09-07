@@ -1,7 +1,8 @@
 """手动处理单条视频（建真值集、调试用）。
 
     python -m core.cli "<抖音分享文本或链接>"
-    python -m core.cli --board             # 打印当前榜单
+    python -m core.cli --board             # 打印当前榜单（纯读）
+    python -m core.cli --render            # 用现有 extract 重渲染 board.md（不重提取）
     python -m core.cli --reprocess <id>    # 用现有 transcript 重跑提取+决策
     python -m core.cli --retranscribe <id> # 删 transcript 强制用 Gladia 重转+提取
 """
@@ -41,6 +42,10 @@ def main(argv: list[str]) -> int:
         return 3
     conn = _db()
     try:
+        if argv[0] == "--render":
+            pipeline.render_board(conn)
+            print("board 已重渲染")
+            return 0
         if argv[0] == "--reprocess":
             if len(argv) < 2:
                 print("用法：--reprocess <aweme_id>", file=sys.stderr)
