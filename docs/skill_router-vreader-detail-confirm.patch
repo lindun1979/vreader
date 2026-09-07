@@ -1,3 +1,7 @@
+# ⚠️ SUPERSEDED（已废弃）：本文件是示意 diff（@@ 说明性 hunk，不能 git apply）。
+# 请用 docs/skill_router-vreader-help-detail-confirm.patch（基于 life-assistant HEAD 的真 unified diff，
+# 含 vr帮助；验收见 ops/verify_upstream_routing.py）。
+#
 跨仓改动：life-assistant/n8n/skill_router.py（vreader 透传分支）
 目的：让飞书能把「vr明细 <id>」和带第二参数的「vr确认 <id> <记录码>」正确转发给 vreader。
 影响面：仅 vreader 专属的 _VREADER_* 正则与 _vreader_classify（vreader 独有函数），

@@ -1,4 +1,4 @@
-from core import routing
+from core import routing, service
 
 
 def test_douyin_short_link_routes_to_ingest():
@@ -17,6 +17,35 @@ def test_board_command():
 def test_confirm_command():
     assert routing.classify("vr确认 6961737553342991651") == "confirm"
     assert routing.classify("/vreader 确认 v123") == "confirm"
+
+
+def test_confirm_with_second_arg():
+    # 逐条冲突记录码 / rev:版本（放宽 confirm）
+    assert routing.classify("vr确认 6961737553342991651 a1b2c3d4") == "confirm"
+    assert routing.classify("vr确认 6961737553342991651 rev:abc123") == "confirm"
+
+
+def test_detail_command():
+    assert routing.classify("vr明细 6961737553342991651") == "detail"
+    assert routing.classify("/vreader 明细 v123") == "detail"
+    assert routing.parse_detail("vr明细 v123") == "v123"
+
+
+def test_help_command():
+    assert routing.classify("vr帮助") == "help"
+    assert routing.classify("/vreader 帮助") == "help"
+
+
+def test_help_word_in_sentence_not_matched():
+    assert routing.classify("能给我点帮助吗") is None
+
+
+def test_help_handler_returns_usage():
+    code, reply = service.handle_help(None, {})
+    assert code == 200
+    for cmd in ["vr榜单", "vr明细", "vr确认", "vr帮助", "rev:"]:
+        assert cmd in reply
+    assert "/help" in service._ROUTES
 
 
 def test_plain_chat_not_forwarded():

@@ -10,14 +10,17 @@ from __future__ import annotations
 import re
 
 _DOUYIN_URL = re.compile(r"(v\.douyin\.com/|douyin\.com/(?:video|note)/|iesdouyin\.com/)")
+_HELP = re.compile(r"^\s*(?:/vreader\s+帮助|vr帮助)\s*$")
 _BOARD = re.compile(r"^\s*(?:/vreader\s+榜单|vr榜单)\s*$")
 _DETAIL = re.compile(r"^\s*(?:/vreader\s+明细|vr明细)\s+(\S+)\s*$")
 _CONFIRM = re.compile(r"^\s*(?:/vreader\s+确认|vr确认)\s+(\S+)(?:\s+(\S+))?\s*$")
 
 
 def classify(text: str) -> str | None:
-    """返回 'ingest' | 'board' | 'detail' | 'confirm' | None。"""
+    """返回 'ingest' | 'board' | 'detail' | 'confirm' | 'help' | None。"""
     t = text or ""
+    if _HELP.match(t):
+        return "help"
     if _CONFIRM.match(t):
         return "confirm"
     if _DETAIL.match(t):

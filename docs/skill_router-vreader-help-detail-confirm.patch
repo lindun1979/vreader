@@ -1,0 +1,39 @@
+# 跨仓改动：life-assistant/n8n/skill_router.py（vreader 透传：help + detail + 放宽 confirm）
+# 基线 commit: 7e5b40c
+# 目的：飞书把「vr帮助」「vr明细 <id>」「vr确认 <id> <记录码|rev:>」正确转发给 vreader。
+# 影响面：仅 _VREADER_* 正则与 _vreader_classify（vreader 独有），不碰其他技能路由。
+# 验收：ops/verify_upstream_routing.py <checkout> 从应用补丁后的真实 _vreader_classify 跑契约。
+#
+diff --git a/n8n/skill_router.py b/n8n/skill_router.py
+index 57bedea..6d83151 100644
+--- a/n8n/skill_router.py
++++ b/n8n/skill_router.py
+@@ -326,8 +326,11 @@ def _send_fiona_reply(chat_id, resp):
+ # === vreader 抖音视频榜单透传 ===
+ # 独立仓库/服务(:8232)，只复用飞书渠道。配置(url+shared_secret)读 ~/.config/vreader/config.json。
+ _VREADER_DOUYIN = _re.compile(r'(v\.douyin\.com/|douyin\.com/(?:video|note)/|iesdouyin\.com/)')
++_VREADER_HELP = _re.compile(r'^\s*(?:/vreader\s+帮助|vr帮助)\s*$')
+ _VREADER_BOARD = _re.compile(r'^\s*(?:/vreader\s+榜单|vr榜单)\s*$')
+-_VREADER_CONFIRM = _re.compile(r'^\s*(?:/vreader\s+确认|vr确认)\s+(\S+)\s*$')
++_VREADER_DETAIL = _re.compile(r'^\s*(?:/vreader\s+明细|vr明细)\s+\S+\s*$')
++# 放宽：确认命令允许可选第二参数（逐条确认冲突记录的“记录码”，或 rev:<版本>）
++_VREADER_CONFIRM = _re.compile(r'^\s*(?:/vreader\s+确认|vr确认)\s+\S+(?:\s+\S+)?\s*$')
+ 
+ 
+ def _load_vreader_config():
+@@ -340,10 +343,14 @@ def _load_vreader_config():
+ 
+ 
+ def _vreader_classify(text):
+-    """返回 ('ingest'|'board'|'confirm', endpoint) 或 None。普通聊天不转发。"""
++    """返回 endpoint('/ingest'|'/board'|'/detail'|'/confirm'|'/help') 或 None。普通聊天不转发。"""
+     t = text or ""
++    if _VREADER_HELP.match(t):
++        return "/help"
+     if _VREADER_CONFIRM.match(t):
+         return "/confirm"
++    if _VREADER_DETAIL.match(t):
++        return "/detail"
+     if _VREADER_BOARD.match(t):
+         return "/board"
+     if _VREADER_DOUYIN.search(t):

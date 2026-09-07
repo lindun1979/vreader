@@ -182,6 +182,21 @@ def handle_confirm(conn, payload: dict) -> tuple[int, str]:
     return 200, msg
 
 
+_HELP_TEXT = (
+    "📖 vreader 用法（token 词源模型实测榜单）\n"
+    "· 直接发抖音分享链接 → 自动下载/转写/提取，处理完回执\n"
+    "· vr榜单 —— 取回最新「模型 × bug 难度」榜单\n"
+    "· vr明细 <video_id> —— 看某视频逐条明细（记录码 + 状态 + 证据）\n"
+    "· vr确认 <video_id> —— 批量确认普通/新版本待确认记录入榜（新版本首次确认即登记）\n"
+    "· vr确认 <video_id> <记录码> —— 逐条确认矛盾记录\n"
+    "· vr确认 <video_id> rev:<版本> —— 绑版本确认（防确认过时内容）\n"
+    "· vr帮助 —— 显示本说明")
+
+
+def handle_help(conn, payload: dict) -> tuple[int, str]:
+    return 200, _HELP_TEXT
+
+
 def handle_detail(conn, payload: dict) -> tuple[int, str]:
     from . import extract as ex_mod, lock, routing
     video_id = routing.parse_detail(payload.get("text") or "")
@@ -256,6 +271,7 @@ _ROUTES = {
     "/board": handle_board,
     "/detail": handle_detail,
     "/confirm": handle_confirm,
+    "/help": handle_help,
     "/healthz": handle_healthz,
 }
 
