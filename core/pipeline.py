@@ -116,9 +116,13 @@ def _prior_asr_model(extract_path: str) -> str | None:
 
 
 def _finish(conn, aweme_id: str, chat_id: str, ex: dict, p: dict) -> str:
-    """决策重判 + 渲染 + 终态成功 + 清理媒体（恢复捷径与正常路径共用）。"""
+    """决策重判 + 渲染 + 终态成功 + 清理媒体（恢复捷径与正常路径共用）。
+    M05 统一顺序：publish_lock → 读已提交 known 集合 B → 决策（单事务）→ 渲染。
+    M08：决策快照 known_versions_used_at_decision 写回 extract.json（提取输入 A 不改写）。"""
     with lock.publish_lock:  # C8 publish_extract：决策写入与渲染对 confirm 原子
-        counts = extract_mod.apply_decisions(conn, aweme_id, ex)
+        known_b = db.list_known_versions(conn)  # 决策时点集合 B（锁内读已提交）
+        counts = extract_mod.apply_decisions(conn, aweme_id, ex, known=known_b)
+        _write_decision_snapshot(ex, p, known_b)
         db.set_status(conn, aweme_id, db.RENDERING)
         render_board(conn)
     title = (ex.get("title") or "")[:30]
@@ -140,6 +144,19 @@ def _finish(conn, aweme_id: str, chat_id: str, ex: dict, p: dict) -> str:
     db.finalize_task(conn, aweme_id, db.SUCCEEDED, chat_id=chat_id, content=msg)
     _cleanup_media(p)
     return db.SUCCEEDED
+
+
+def _write_decision_snapshot(ex: dict, p: dict, known_b) -> None:
+    """把决策时点版本集写回 extract.json（M08）：仅更新 *_at_decision 与 decided_at，
+    known_versions_used（提取输入 A）不改写。仅 v2 产物写（旧产物无该字段、不动）。"""
+    if ex.get("schema_rev") != extract_mod.SCHEMA_REV:
+        return
+    ex["known_versions_used_at_decision"] = sorted([list(t) for t in known_b])
+    ex["decided_at"] = time.time()
+    try:
+        util.atomic_write_text(p["extract"], json.dumps(ex, ensure_ascii=False, indent=2))
+    except OSError:
+        pass
 
 
 def process_task(conn, task) -> str:
@@ -181,8 +198,9 @@ def process_task(conn, task) -> str:
         ex = extract_mod.load_valid_extract(p["extract"], transcript=transcript,
                                             expected_video_id=aweme_id)
         if ex is None:
+            known_a = db.list_known_versions(conn)  # 提取输入集合 A（build 前读）
             ex = extract_mod.build_extract(aweme_id=aweme_id, title=title,
-                                           transcript=transcript)
+                                           transcript=transcript, known=known_a)
             util.atomic_write_text(p["extract"],
                                    json.dumps(ex, ensure_ascii=False, indent=2))
         return _finish(conn, aweme_id, chat_id, ex, p)
@@ -210,11 +228,14 @@ def reprocess(conn, aweme_id: str) -> str:
         raise extract_mod.ExtractError(f"无 transcript，无法重跑：{aweme_id}")
     task = db.get_task(conn, aweme_id)
     title = (task["title"] if task else "") or ""
+    known_a = db.list_known_versions(conn)  # 提取输入集合 A（build 前读）
     ex = extract_mod.build_extract(aweme_id=aweme_id, title=title, transcript=transcript,
-                                   asr_model=_prior_asr_model(p["extract"]))
+                                   asr_model=_prior_asr_model(p["extract"]), known=known_a)
     util.atomic_write_text(p["extract"], json.dumps(ex, ensure_ascii=False, indent=2))
     with lock.publish_lock:
-        counts = extract_mod.apply_decisions(conn, aweme_id, ex)
+        known_b = db.list_known_versions(conn)
+        counts = extract_mod.apply_decisions(conn, aweme_id, ex, known=known_b)
+        _write_decision_snapshot(ex, p, known_b)
         render_board(conn)
     return (f"reprocess {aweme_id}: auto_ok={counts['auto_ok']} pending={counts['pending']} "
             f"rev={ex.get('result_rev')}")

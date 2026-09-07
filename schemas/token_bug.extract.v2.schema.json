@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "token_bug extract v2 (series-norm)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_rev", "video_id", "title", "extracted_at", "extractor_version", "prompt_hash", "asr_model", "records"],
+  "allOf": [
+    {
+      "if": {"properties": {"records": {"maxItems": 0}}},
+      "then": {"required": ["no_content"], "properties": {"no_content": {"const": true}}}
+    }
+  ],
+  "properties": {
+    "schema_rev": {"const": 2},
+    "video_id": {"type": "string", "minLength": 1},
+    "title": {"type": "string"},
+    "dropped_count": {"type": "integer", "minimum": 0},
+    "result_rev": {"type": "string"},
+    "no_content": {"type": "boolean"},
+    "prompt_full_hash": {"type": "string"},
+    "known_versions_snapshot": {"type": "string"},
+    "known_versions_used": {
+      "type": "array",
+      "items": {"type": "array", "items": {"type": "string"}, "minItems": 3, "maxItems": 3}
+    },
+    "known_versions_used_at_decision": {
+      "type": "array",
+      "items": {"type": "array", "items": {"type": "string"}, "minItems": 3, "maxItems": 3}
+    },
+    "decided_at": {"type": "number"},
+    "dropped": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["reason"],
+        "properties": {"reason": {"type": "string"}, "record": {}}
+      }
+    },
+    "extracted_at": {"type": "string", "minLength": 1},
+    "extractor_version": {"type": "string", "minLength": 1},
+    "prompt_hash": {"type": "string", "minLength": 1},
+    "asr_model": {"type": "string", "minLength": 1},
+    "records": {
+      "type": "array",
+      "minItems": 0,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["model_canonical", "model_raw", "model_series", "model_version", "model_variant", "bug_level", "bug_id", "score", "rounds", "solved", "evidence_quote", "confidence"],
+        "properties": {
+          "model_canonical": {"type": "string", "minLength": 1},
+          "model_raw": {"type": "string"},
+          "model_series": {"type": "string"},
+          "model_version": {"type": "string"},
+          "model_variant": {"type": "string"},
+          "bug_level": {"type": "string", "enum": ["青铜", "白银", "黄金", "钻石", "王者"]},
+          "bug_id": {"type": "string"},
+          "score": {"type": "integer", "minimum": 0, "maximum": 3},
+          "rounds": {"type": ["integer", "null"], "minimum": 1},
+          "solved": {"type": "boolean"},
+          "evidence_quote": {"type": "string", "minLength": 10},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"solved": {"const": true}}},
+            "then": {"properties": {"rounds": {"type": "integer", "minimum": 1}}}
+          },
+          {
+            "if": {"properties": {"solved": {"const": false}}},
+            "then": {"properties": {"rounds": {"type": "null"}}}
+          }
+        ]
+      }
+    }
+  }
+}

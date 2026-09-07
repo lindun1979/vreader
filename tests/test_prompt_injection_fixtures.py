@@ -24,7 +24,7 @@ def test_injection_text_treated_as_data_only():
     ex = extract.build_extract(aweme_id="v", title="t", transcript=TX, claude_text=txt)
     assert ex["records"][0]["model_canonical"] == "Qwen3.8"
     assert ex["records"][0]["solved"] is True and ex["records"][0]["rounds"] == 1  # 黄金 score2=第1轮
-    # 注入文本没有变成额外字段/命令：schema 只允许既定字段
+    # 注入文本没有变成额外字段/命令：schema 只允许既定字段（v2 增 series 三字段）
     assert set(ex["records"][0]) == {
-        "model_raw", "model_canonical", "bug_level", "bug_id", "score", "solved", "rounds",
-        "evidence_quote", "confidence"}
+        "model_raw", "model_canonical", "model_series", "model_version", "model_variant",
+        "bug_level", "bug_id", "score", "solved", "rounds", "evidence_quote", "confidence"}

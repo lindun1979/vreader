@@ -1,147 +1,129 @@
-# 模型规范 ID + 别名/ASR 常见错写映射。
-# canonical: [别名与 ASR 可能错写...]。提取层把 model_raw 归一到 canonical；
-# 别名命中优先于 LLM 的 canonical（人工校准的 ASR 纠错更可信）。
-# 模型清单以博主真值标注为准（tests/gold/token_bug/*）。
+# 模型系列表 v2（series-norm）。每个系列只记「身份模板 + 系列名糊法 + 昵称 + 变体」，
+# 版本号不写死在别名里——靠代码对转写/标题做「提及锚定」从源文本数字拼合（GRM5.3、
+# step3.7 flash 等新版本无需改表）。
+#
+# 字段：
+#   format            冻结的身份模板，{v} 处填版本号；canonical = format.format(v=版本)
+#                     + (" "+variant if variant)。改 format = 显式迁移事件，勿顺手改。
+#   version_letter    （可选）版本号前的格式字母（DeepSeek V4 的 V、Kimi K3 的 K），
+#                     锚定扫描时允许出现在系列名与数字之间（deepseekv4 / kimi k3）。
+#   aliases           系列名糊法（不带版本、不带变体）。锚定：alias + 邻接数字 → 版本锚点。
+#   nicknames         系列级动态昵称（只绑系列，永不携带版本；如「一哥」随期变版本）。
+#   variants          该系列允许的变体清单；每个变体可有 aliases（变体词形）与 nicknames
+#                     （变体级昵称，绑 系列+变体，仍不绑版本）。未在此清单的 variant → UNKNOWN。
+#   version_map       （可选）原始提及数字 → 归一版本（Opus 4.8/5.0 都归 "5"）。
+#   seed_versions     一次性兼容基线：基础款（无变体）的已知版本，入 known_versions(source=seed)。
+#   seed_variant_versions  变体款的已知版本 {变体名: [版本...]}。
+# 上线后新增版本一律走 vr确认（confirm），不再回写 seed 字段。
 
-# —— 国产 ——
-GLM-5.3:
-  - glm5.3
-  - glm 5.3
-  - gm5.3
-  - gm5点3
-  - g5.3
-  - 国模一哥
-  - 智谱 5.3
-GLM-5.2:
-  # 与 5.3 并列独立版本（ASR 常糊成 GRM）。只用版本号别名区分。
-  # ⚠️「一哥/国模一哥」是博主对 GLM 系【当时最新】版本的动态称呼，非固定版本——
-  # 某期一哥=5.2、另一期=5.3，绝不可把"一哥"绑某版本号（下方 5.3 的"国模一哥"
-  # 别名存历史风险，只在 5.3 为最新的那期成立；靠视频里的版本号数字才可靠）。
-  - glm5.2
-  - glm 5.2
-  - grm5.2
-  - grm 5.2
-  - gm5.2
-GLM-5.3 Flash:
-  - glm5.3 flash
-  - glm 5.3 flash
-  - 小一哥
-DeepSeek V4:
-  - deepseek v4
-  - deepseekv4
-  - 深度求索 v4
-DeepSeek V4 Pro:
-  - deepseek v4 pro
-  - deepseekv4pro
-  - v4pro
-  - v4 pro
-  - 4pro
-  - pro
-DeepSeek V4 Flash:
-  - deepseek v4 flash
-  - deepseekv4flash
-Qwen3.8:
-  - qwen3.8
-  - qwen 3.8
-  - 通义千问 3.8
-  - 千问 3.8
-Qwen3.8 Flash:
-  - qwen3.8 flash
-  - qwen 3.8 flash
-  - owen 3.8 flash
-  - owen3.8 flash
-Kimi K3:
-  - kimi k3
-  - k3
-  - 中年 k3
-  - 克米 k3
-Hunyuan 3.0:
-  - hunyuan 3.0
-  - hy3.0
-  - hy3
-  - 混元 3.0
-  - 混元3.0
-MiMo 2.5 Pro:
-  - mimo 2.5 pro
-  - mimo2.5 pro
-  - 小米 mimo
-  - 米某 2.5
-Doubao Seed 2.1:
-  # 博主不同期对同一模型有"Doubao Seed 2.1 / 豆包 2.1 Pro"两种叫法，统一为一个
-  - doubao seed 2.1
-  - 豆包 seed 2.1
-  - doubao 2.1 pro
-  - 豆包 2.1 pro
-  - doubao 2.1
-  - 豆姐
-  - 豆包
-Step 3.7 Flash:
-  - step 3.7 flash
-  - step3.7 flash
-  - 阶跃 3.7
-  - 阶跃星辰 3.7
-Muse Spark 1.2:
-  - muse spark 1.2
-  - musespark 1.2
-  - muse spark1.2
-  - 缪斯 1.2
-Longcat 2.0:
-  - longcat 2.0
-  - longcat2.0
-  - 龙猫 2.0
-  - 龙猫
+GLM:
+  format: "GLM-{v}"
+  aliases: [glm, grm, gm, 智谱, 智普]
+  nicknames: [一哥, 国模一哥]
+  variants:
+    Flash:
+      aliases: [flash]
+      nicknames: [小一哥]
+  seed_versions: ["5.2", "5.3"]
+  seed_variant_versions: {Flash: ["5.3"]}
 
-# —— 海外 ——
-Fable 5.1:
-  - fable5.1
-  - fable 5.1
-  - claude fable 5.1
-  - 飞包 5.1
-  - 飞包
-  - 费波 5.1
-Claude Opus 5:
-  - claude opus 5
-  - claude opus 5.0
-  - opus 5
-  - opus 5.0
-  - opus
-  - 克劳德 opus
-  # 博主标题常把 5.0 写成 4.8（真值标注统一为 Opus 5），故并入
-  - claude opus 4.8
-  - opus 4.8
-  - opus4.8
-Claude Sonnet 4.5:
-  - claude sonnet 4.5
-  - sonnet 4.5
-GPT 5.6 Luna:
-  # OpenAI GPT 5.6 Luna（ASR 常把 GPT 糊成 GBT，Luna 可能单独出现）。
-  - gpt 5.6 luna
-  - gpt5.6 luna
-  - gpt5.6luna
-  - gbt5.6luna
-  - gbt 5.6 luna
-  - gbt5.6 luna
-  - luna
-Gemini 3.7 Flash:
-  - gemini 3.7 flash
-  - gemini3.7
-  - 双子星 3.7
-  - 北美大豆包
-  - 北美豆包
-  - manflash
-  - manyflash
-  - manf
-Grok 4.5:
-  # Grok 4.5 与 4.6 是不同版本，必须区分（勿因 4.6 是清单里唯一 Grok 就把 4.5 并入）。
-  - grok 4.5
-  - grok4.5
-  - 格洛克 4.5
-  - 格洛克4.5
-  - 格罗克 4.5
-  - 格鲁克 4.5
-Grok 4.6:
-  - grok 4.6
-  - grok4.6
-  - 格罗克 4.6
-  # ⚠️「火星刺客/火星杀手/火星选手/火星」是博主对 Grok 系的动态称呼，随期变版本，
-  #   不绑版本号（同 GLM「一哥」教训）——版本靠视频里的数字，不靠昵称。
+DeepSeek:
+  format: "DeepSeek V{v}"
+  version_letter: V
+  aliases: [deepseek, 深度求索, 深度球锁, ds]
+  variants:
+    Pro:
+      aliases: [pro]
+    Flash:
+      aliases: [flash]
+  seed_versions: ["4"]
+  seed_variant_versions: {Pro: ["4"], Flash: ["4"]}
+
+Qwen:
+  format: "Qwen{v}"
+  aliases: [qwen, owen, 通义千问, 千问]
+  variants:
+    Flash:
+      aliases: [flash]
+  seed_versions: ["3.8"]
+  seed_variant_versions: {Flash: ["3.8"]}
+
+Kimi:
+  format: "Kimi K{v}"
+  version_letter: K
+  aliases: [kimi, 克米, 中年]
+  seed_versions: ["3"]
+
+Hunyuan:
+  format: "Hunyuan {v}"
+  aliases: [hunyuan, hy, 混元]
+  seed_versions: ["3.0"]
+
+MiMo:
+  format: "MiMo {v}"
+  aliases: [mimo, 小米, 米某]
+  variants:
+    Pro:
+      aliases: [pro]
+  seed_variant_versions: {Pro: ["2.5"]}
+
+Doubao Seed:
+  format: "Doubao Seed {v}"
+  aliases: [doubao seed, doubao, 豆包, 豆姐]
+  seed_versions: ["2.1"]
+
+Step:
+  format: "Step {v}"
+  aliases: [step, 阶跃, 阶跃星辰]
+  variants:
+    Flash:
+      aliases: [flash]
+  seed_variant_versions: {Flash: ["3.7"]}
+
+Muse Spark:
+  format: "Muse Spark {v}"
+  aliases: [muse spark, musespark, 缪斯]
+  seed_versions: ["1.2"]
+
+Longcat:
+  format: "Longcat {v}"
+  aliases: [longcat, 龙猫]
+  seed_versions: ["2.0"]
+
+Fable:
+  format: "Fable {v}"
+  aliases: [fable, claude fable, 飞包, 费波]
+  seed_versions: ["5.1"]
+
+Claude Opus:
+  format: "Claude Opus {v}"
+  aliases: [claude opus, opus, 克劳德]
+  version_map: {"4.8": "5", "5.0": "5"}
+  seed_versions: ["5"]
+
+Claude Sonnet:
+  format: "Claude Sonnet {v}"
+  aliases: [claude sonnet, sonnet]
+  seed_versions: ["4.5"]
+
+GPT:
+  format: "GPT {v}"
+  aliases: [gpt, gbt, 芝麻开门]
+  variants:
+    Luna:
+      aliases: [luna]
+  seed_variant_versions: {Luna: ["5.6"]}
+
+Gemini:
+  format: "Gemini {v}"
+  aliases: [gemini, 双子星, 北美大豆包, 北美豆包]
+  variants:
+    Flash:
+      aliases: [flash, manflash, manyflash, manf]
+  seed_variant_versions: {Flash: ["3.7"]}
+
+Grok:
+  format: "Grok {v}"
+  aliases: [grok, 格洛克, 格罗克, 格鲁克, 格肉科, 格肉]
+  nicknames: [火星刺客, 火星杀手, 火星选手, 火星]
+  seed_versions: ["4.5", "4.6"]

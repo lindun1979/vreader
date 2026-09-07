@@ -67,9 +67,9 @@ def _gladia_upload(mp3_path: str, key: str) -> str:
 
 
 def _vocabulary() -> list[str]:
-    """热词：models.yml 规范名 + 等级词（提升模型名/判决段识别）。"""
+    """热词：系列裸名 + 等级词 + 已知版本拼合 canonical（截断至 100，见 extract）。"""
     from . import extract
-    return [*extract._load_models().keys(), "青铜", "白银", "黄金", "钻石", "王者"]
+    return extract.gladia_hotwords()
 
 
 def _transcribe_gladia(video_path: str, key: str) -> str:

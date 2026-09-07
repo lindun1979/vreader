@@ -29,6 +29,7 @@ AUTO_OK = "auto_ok"
 PENDING = "pending"                 # 普通低置信：批量确认可批
 PENDING_UNKNOWN = "pending_unknown"  # 模型名未知：批量排除，补别名表后 reprocess
 PENDING_CONFLICT = "pending_conflict"  # 同一 attempt 矛盾得分：逐条确认（组内无裁决时）
+PENDING_NEW_VERSION = "pending_new_version"  # 三元组合法但版本未登记：vr确认 一次入库
 APPROVED = "approved"
 REJECTED_CONFLICT = "rejected_conflict"  # 冲突组落败方：裁决恒存
 EXPIRED = "expired"
@@ -39,7 +40,9 @@ PERSISTENT_DECISIONS = (APPROVED, REJECTED_CONFLICT)
 # mark_stale 豁免（缺失也不置 stale）：仅 rejected_conflict（裁决恒存，消除"stale 抹拒绝
 # 再现重开"反例）。APPROVED 缺失仍照常 stale（规则5，带 ⚠️ 单独计数提示）。
 STALE_EXEMPT = (REJECTED_CONFLICT,)
-PENDING_KINDS = (PENDING, PENDING_UNKNOWN, PENDING_CONFLICT)
+PENDING_KINDS = (PENDING, PENDING_UNKNOWN, PENDING_CONFLICT, PENDING_NEW_VERSION)
+# 会过期的待确认态（pending_conflict 不过期——冲突需人工裁决，不该静默 expire）
+EXPIRABLE_PENDING = (PENDING, PENDING_UNKNOWN, PENDING_NEW_VERSION)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
@@ -82,6 +85,16 @@ CREATE TABLE IF NOT EXISTS record_decisions (
   created_at    REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_decisions_aweme ON record_decisions(aweme_id);
+
+CREATE TABLE IF NOT EXISTS known_versions (
+  series      TEXT NOT NULL,
+  version     TEXT NOT NULL,
+  variant     TEXT NOT NULL DEFAULT '',
+  source      TEXT NOT NULL CHECK (source IN ('seed','confirm')),
+  approved_by TEXT,
+  created_at  REAL NOT NULL,
+  PRIMARY KEY (series, version, variant)
+);
 """
 
 
@@ -95,10 +108,12 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
 
 
 def init(db_path: str | Path) -> None:
+    """建表 + 幂等 seed known_versions（serve 与 CLI 写路径同经此路径，M07）。"""
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     conn = connect(db_path)
     try:
         conn.executescript(_SCHEMA)
+        seed_known_versions(conn, commit=False)
         conn.commit()
     finally:
         conn.close()
@@ -315,21 +330,76 @@ def list_decisions_for_video(conn: sqlite3.Connection, aweme_id: str) -> list[sq
 
 
 def approve_pending_for_video(conn: sqlite3.Connection, aweme_id: str, approver: str) -> int:
+    """批量确认：PENDING 与 PENDING_NEW_VERSION 均置 APPROVED（M04）。新版本登记由
+    上层 extract.approve_pending_for_video 在同事务内逐条 register_known_version 完成。"""
     now = time.time()
     cur = conn.execute(
-        "UPDATE record_decisions SET decision=?, approved_by=?, approved_at=? WHERE aweme_id=? AND decision=?",
-        (APPROVED, approver, now, aweme_id, PENDING))
+        "UPDATE record_decisions SET decision=?, approved_by=?, approved_at=? WHERE aweme_id=?"
+        " AND decision IN (?,?)",
+        (APPROVED, approver, now, aweme_id, PENDING, PENDING_NEW_VERSION))
     conn.commit()
     return cur.rowcount
 
 
 def expire_old_pending(conn: sqlite3.Connection, older_than_s: float) -> int:
+    """过期 pending / pending_unknown / pending_new_version（pending_conflict 不过期）。"""
     cutoff = time.time() - older_than_s
+    q = ",".join("?" * len(EXPIRABLE_PENDING))
     cur = conn.execute(
-        "UPDATE record_decisions SET decision=? WHERE decision=? AND created_at<?",
-        (EXPIRED, PENDING, cutoff))
+        f"UPDATE record_decisions SET decision=? WHERE decision IN ({q}) AND created_at<?",
+        (EXPIRED, *EXPIRABLE_PENDING, cutoff))
     conn.commit()
     return cur.rowcount
+
+
+# ---------- known_versions（新版本首次确认制，M04/M07）----------
+
+def seed_known_versions(conn: sqlite3.Connection, *, commit: bool = True) -> int:
+    """从 models.yml 的 seed_versions / seed_variant_versions 幂等播种（source='seed'）。
+    INSERT OR IGNORE：重复 seed 无操作；已有 confirm 行不被覆盖（保原审计）。返回尝试行数。"""
+    from . import models
+    data = models.load_series()
+    now = time.time()
+    rows = []
+    for series, cfg in data.items():
+        for v in (cfg.get("seed_versions") or []):
+            rows.append((series, models.norm_version(str(v)), ""))
+        for variant, vers in (cfg.get("seed_variant_versions") or {}).items():
+            for v in vers:
+                rows.append((series, models.norm_version(str(v)), variant))
+    for series, version, variant in rows:
+        conn.execute(
+            "INSERT OR IGNORE INTO known_versions(series, version, variant, source,"
+            " approved_by, created_at) VALUES (?,?,?,'seed',NULL,?)",
+            (series, version, variant, now))
+    if commit:
+        conn.commit()
+    return len(rows)
+
+
+def register_known_version(conn: sqlite3.Connection, series: str, version: str,
+                           variant: str, approver: str | None, *, commit: bool = False) -> None:
+    """登记一个已知版本（source='confirm'）。只收调用方 conn，**禁止内部
+    connect/init/BEGIN/commit**（沿用 upsert_decision(commit=False) 惯例，M05）。
+    INSERT OR IGNORE：已存在（含 seed 行）不覆盖、不改审计。"""
+    conn.execute(
+        "INSERT OR IGNORE INTO known_versions(series, version, variant, source,"
+        " approved_by, created_at) VALUES (?,?,?,'confirm',?,?)",
+        (series, version, variant or "", approver, time.time()))
+    if commit:
+        conn.commit()
+
+
+def list_known_versions(conn: sqlite3.Connection) -> set[tuple[str, str, str]]:
+    """读已提交的已知版本三元组集合（供 prompt 注入/热词/决策判定）。"""
+    rows = conn.execute("SELECT series, version, variant FROM known_versions").fetchall()
+    return {(r["series"], r["version"], r["variant"]) for r in rows}
+
+
+def known_versions_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """读全部 known_versions 行（含 source/created_at，供热词排序/明细）。"""
+    return conn.execute(
+        "SELECT series, version, variant, source, created_at FROM known_versions").fetchall()
 
 
 def board_visible_ids(conn: sqlite3.Connection) -> set[str]:

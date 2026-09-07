@@ -169,12 +169,17 @@ def handle_confirm(conn, payload: dict) -> tuple[int, str]:
             cur = _current_result_rev(video_id)
             if cur and want != cur:
                 return 200, f"内容已更新（当前版本 {cur}，你确认的是 {want}）。请先 vr明细 {video_id} 重新查看。"
-        n = db.approve_pending_for_video(conn, video_id, sender_id)
+        # 批量确认 + 新版本同事务登记（M04）
+        n, registered = ex_mod.approve_pending_for_video(conn, video_id, sender_id)
         if n:
             pipeline.render_board(conn)
     if not n:
         return 200, f"没有可批量确认的待确认记录（{video_id}）。冲突/未知项需 vr明细 后逐条确认。"
-    return 200, f"已确认 {n} 条待确认记录入榜（{video_id}）。"
+    msg = f"已确认 {n} 条待确认记录入榜（{video_id}）。"
+    if registered:
+        uniq = sorted(set(registered))
+        msg += f"\n已登记新版本：{', '.join(uniq)}（此后这些版本不再因新版本待确认）"
+    return 200, msg
 
 
 def handle_detail(conn, payload: dict) -> tuple[int, str]:

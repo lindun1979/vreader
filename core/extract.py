@@ -13,28 +13,29 @@ import subprocess
 import time
 from pathlib import Path
 
-import yaml
 from jsonschema import Draft202012Validator
 
-from . import config, db
+from . import config, db, models as models_mod
 
 EXTRACTOR_VERSION = "token_bug/1"
+SCHEMA_REV = 2
 _CH_DIR = config.ROOT / "channels" / "token_bug"
 _PROMPT_PATH = _CH_DIR / "extract_prompt.md"
 _MODELS_PATH = _CH_DIR / "models.yml"
 _SCHEMA_PATH = config.ROOT / "schemas" / "token_bug.extract.schema.json"
+_SCHEMA_V2_PATH = config.ROOT / "schemas" / "token_bug.extract.v2.schema.json"
 
+# 旧轨（无 schema_rev）：既有 schema；v2 轨：新 schema（带 series 三字段 + schema_rev）
 _SCHEMA = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
 _validator = Draft202012Validator(_SCHEMA)
 _record_validator = Draft202012Validator(_SCHEMA["properties"]["records"]["items"])
+_SCHEMA_V2 = json.loads(_SCHEMA_V2_PATH.read_text(encoding="utf-8"))
+_validator_v2 = Draft202012Validator(_SCHEMA_V2)
+_record_validator_v2 = Draft202012Validator(_SCHEMA_V2["properties"]["records"]["items"])
 
 
 class ExtractError(Exception):
     pass
-
-
-def _load_models() -> dict[str, list[str]]:
-    return yaml.safe_load(_MODELS_PATH.read_text(encoding="utf-8")) or {}
 
 
 def _prompt_template() -> str:
@@ -42,36 +43,57 @@ def _prompt_template() -> str:
 
 
 def prompt_hash() -> str:
-    """prompt 模板 + 模型表的联合哈希，用于榜单可解释性与决策版本。"""
+    """prompt 模板 + 模型表的**静态**联合哈希（不含 known_versions；本量入 rid 语义）。"""
     h = hashlib.sha256()
     h.update(_prompt_template().encode())
     h.update(_MODELS_PATH.read_text(encoding="utf-8").encode())
     return h.hexdigest()[:12]
 
 
-def _build_prompt(transcript: str, title: str = "") -> str:
-    models = _load_models()
-    model_list = "\n".join(f"- {k}" for k in models)
-    alias_table = "\n".join(
-        f"- {k}: {', '.join(v or [])}" for k, v in models.items())
+def prompt_full_hash(prompt: str) -> str:
+    """实际发送 prompt 的哈希（含注入的 known_versions；溯源用，不入 rid）。"""
+    return hashlib.sha256(prompt.encode()).hexdigest()[:12]
+
+
+def _series_table(data: dict, known: set[tuple[str, str, str]]) -> str:
+    """把系列表渲染为 prompt 注入文本：每系列一段（系列名 + 别名 + 昵称 + 变体 + 已知版本）。"""
+    known_by_series: dict[str, list[str]] = {}
+    for s, v, var in sorted(known):
+        try:
+            known_by_series.setdefault(s, []).append(
+                models_mod.compose_canonical(s, v, var, data=data))
+        except models_mod.ConfigError:
+            continue
+    lines = []
+    for series, cfg in data.items():
+        parts = [f"- {series}（模板 {cfg['format']}）"]
+        aliases = cfg.get("aliases") or []
+        nicks = (cfg.get("nicknames") or []) + [
+            n for vc in (cfg.get("variants") or {}).values() for n in ((vc or {}).get("nicknames") or [])]
+        if aliases:
+            parts.append(f"  别名: {', '.join(aliases)}")
+        if nicks:
+            parts.append(f"  昵称(随期变版本,勿绑版本号): {', '.join(nicks)}")
+        variants = list((cfg.get("variants") or {}).keys())
+        if variants:
+            parts.append(f"  变体: {', '.join(variants)}")
+        kv = known_by_series.get(series)
+        if kv:
+            parts.append(f"  已知版本: {', '.join(kv)}")
+        lines.append("\n".join(parts))
+    return "\n".join(lines)
+
+
+def _build_prompt(transcript: str, title: str = "",
+                  known: set[tuple[str, str, str]] | None = None) -> str:
+    data = models_mod.load_series()
+    series_table = _series_table(data, known or set())
+    series_names = "\n".join(f"- {s}" for s in data)
     tpl = _prompt_template()
-    return (tpl.replace("{MODEL_LIST}", model_list)
-               .replace("{ALIAS_TABLE}", alias_table)
+    return (tpl.replace("{SERIES_LIST}", series_names)
+               .replace("{SERIES_TABLE}", series_table)
                .replace("{TITLE}", title or "（无标题）")
                .replace("{TRANSCRIPT}", transcript))
-
-
-def _canonicalize(model_raw: str, canonical: str, models: dict[str, list[str]]) -> str:
-    """归一化模型名。**别名表命中优先于 LLM 的 canonical**（别名表是人工校准的
-    ASR 纠错，比 LLM 对乱码的猜测更可信，如 raw='manflash' 应是 Gemini 而非 LLM 猜的
-    MiniMax）。别名未命中时才信任 LLM 的 in-list canonical，否则 UNKNOWN。"""
-    low = (model_raw or "").strip().lower()
-    for k, aliases in models.items():
-        if low == k.lower() or low in {a.lower() for a in (aliases or [])}:
-            return k
-    if canonical in models:
-        return canonical
-    return "UNKNOWN"
 
 
 # 每个等级的满分（第1轮做对得满分；机会数=满分）。得分反推轮次：rounds=满分-score+1。
@@ -278,32 +300,61 @@ def _normalize_quote(s: str) -> str:
 
 def validate_extract(extract: dict, *, transcript: str | None = None,
                      expected_video_id: str | None = None) -> None:
-    """统一产物校验入口（C3）：读回缓存/reprocess 前必过，否则视为不可信。
-    校验：envelope schema + video_id 匹配 + 逐记录 schema + derive 一致 +
-    canonical∈词表∪UNKNOWN + evidence 归一非空(≥4)且（给了 transcript 时）为其子串。
+    """统一产物校验入口（C3/M06 双轨）：读回缓存/reprocess 前必过，否则视为不可信。
+    判轨单位是**整个文件**（envelope 定轨，M13）：
+    - 有 schema_rev → **只接受 2**（未知修订一律拒），按 v2 全套校验（每条须带 series
+      三字段且 compose(series,version,variant)==canonical，或 UNKNOWN 三字段空）。
+    - 无 schema_rev（旧产物）→ canonical 必须 ∈ 冻结 LEGACY_CANONICALS ∪ {UNKNOWN}。
+    公共：video_id 匹配 + 逐记录 schema + derive 一致 + evidence 归一非空(≥4)且子串。
     失败抛 ExtractError。"""
-    errs = sorted(_validator.iter_errors(extract), key=lambda e: list(e.path))
+    rev = extract.get("schema_rev")
+    if rev is not None and rev != SCHEMA_REV:
+        raise ExtractError(f"未知 schema_rev: {rev}（只接受 {SCHEMA_REV}）")
+    v2 = rev is not None
+    validator = _validator_v2 if v2 else _validator
+    rec_validator = _record_validator_v2 if v2 else _record_validator
+    errs = sorted(validator.iter_errors(extract), key=lambda e: list(e.path))
     if errs:
         raise ExtractError(f"envelope schema: {errs[0].message}")
     if expected_video_id is not None and extract.get("video_id") != expected_video_id:
         raise ExtractError(f"video_id 不匹配: {extract.get('video_id')} != {expected_video_id}")
-    models = _load_models()
+    data = models_mod.load_series() if v2 else None
     norm_tx = _normalize_quote(transcript) if transcript is not None else None
     for r in extract["records"]:
-        rerrs = sorted(_record_validator.iter_errors(r), key=lambda e: list(e.path))
+        rerrs = sorted(rec_validator.iter_errors(r), key=lambda e: list(e.path))
         if rerrs:
             raise ExtractError(f"record schema: {rerrs[0].message}")
         solved, rounds = derive_solved_rounds(r.get("bug_level"), r.get("score"))
         if solved is None or r.get("solved") != solved or r.get("rounds") != rounds:
             raise ExtractError(
                 f"solved/rounds 与 score 不一致: {r.get('bug_level')} score={r.get('score')}")
-        if r["model_canonical"] not in models and r["model_canonical"] != "UNKNOWN":
-            raise ExtractError(f"model_canonical 非法（不在词表也非 UNKNOWN）: {r['model_canonical']}")
+        _validate_canonical(r, v2, data)
         q = _normalize_quote(r.get("evidence_quote", ""))
         if len(q) < 4:
             raise ExtractError("evidence 归一后过短(<4)")
         if norm_tx is not None and q not in norm_tx:
             raise ExtractError("evidence 非转写子串")
+
+
+def _validate_canonical(r: dict, v2: bool, data: dict | None) -> None:
+    mc = r["model_canonical"]
+    if not v2:
+        if mc not in models_mod.LEGACY_CANONICALS and mc != "UNKNOWN":
+            raise ExtractError(f"legacy canonical 非法（不在冻结名单也非 UNKNOWN）: {mc}")
+        return
+    s, v, var = r.get("model_series", ""), r.get("model_version", ""), r.get("model_variant", "")
+    if mc == "UNKNOWN":
+        if s or v or var:
+            raise ExtractError("UNKNOWN 记录 series/version/variant 必须为空")
+        return
+    if not (s and v):
+        raise ExtractError(f"v2 记录缺 series/version: {mc}")
+    try:
+        composed = models_mod.compose_canonical(s, v, var, data=data)
+    except models_mod.ConfigError as e:
+        raise ExtractError(f"v2 记录三元组无法拼合: {e}") from e
+    if composed != mc:
+        raise ExtractError(f"compose(series,version,variant)≠canonical: {composed} != {mc}")
 
 
 def load_valid_extract(extract_path: str, *, transcript: str | None = None,
@@ -327,20 +378,31 @@ def load_valid_extract(extract_path: str, *, transcript: str | None = None,
 
 
 def build_extract(*, aweme_id: str, title: str, transcript: str,
-                  claude_text: str | None = None, asr_model: str | None = None) -> dict:
-    """把 LLM 输出组装为 extract 对象并做全部校验；不写库。校验失败抛 ExtractError。
-    asr_model：显式指定该转写的 ASR 引擎（reprocess 不重转时传原引擎，避免误标默认值）；
-    None 时取 asr 模块最近一次实际转写引擎。"""
-    models = _load_models()
+                  claude_text: str | None = None, asr_model: str | None = None,
+                  known: set[tuple[str, str, str]] | None = None) -> dict:
+    """把 LLM 输出组装为 v2 extract 对象并做全部校验；不写库。校验失败抛 ExtractError。
+    LLM 输出 model_raw + model_series/version/variant（不出 canonical）；代码经**提及锚定**
+    解析出 canonical + 归一三元组（M02/M03）。
+    known：本次注入 prompt 的已知版本三元组集合（溯源 known_versions_used，M08）；None=空。
+    asr_model：显式指定该转写的 ASR 引擎（reprocess 不重转时传原引擎）。"""
+    known = known or set()
+    data = models_mod.load_series()
+    anchors = models_mod.build_anchors(transcript, title, data=data)
+    prompt = _build_prompt(transcript, title, known=known)
     if claude_text is None:
-        claude_text = _call_llm(_build_prompt(transcript, title))
+        claude_text = _call_llm(prompt)
     raw_records = _parse_records_json(claude_text)
 
     norm_tx = _normalize_quote(transcript)
     records, dropped = [], []
     for r in raw_records:
         r = dict(r)
-        r["model_canonical"] = _canonicalize(r.get("model_raw", ""), r.get("model_canonical", ""), models)
+        # 提及锚定解析（LLM 的 raw/series/version/variant 不可信，须过源文本锚定）
+        canonical, series, version, variant = models_mod.resolve_record(
+            r.get("model_raw", ""), r.get("model_series", ""),
+            r.get("model_version", ""), r.get("model_variant", ""), anchors, data=data)
+        r["model_canonical"] = canonical
+        r["model_series"], r["model_version"], r["model_variant"] = series, version, variant
         # 由得分反推 solved/rounds（确定性，不靠 LLM 算）
         level, score = r.get("bug_level"), r.get("score")
         if not isinstance(score, int):
@@ -352,7 +414,7 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
             continue
         r["solved"], r["rounds"] = solved, rounds
         # 逐记录校验：坏记录丢弃（不入榜），不拖垮整条视频
-        rerrs = sorted(_record_validator.iter_errors(r), key=lambda e: list(e.path))
+        rerrs = sorted(_record_validator_v2.iter_errors(r), key=lambda e: list(e.path))
         if rerrs:
             dropped.append({"record": r, "reason": rerrs[0].message})
             continue
@@ -362,27 +424,74 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
             continue
         records.append(r)
 
+    used = sorted([list(t) for t in known])
     extract = {
+        "schema_rev": SCHEMA_REV,
         "video_id": aweme_id,
         "title": title,
         "extracted_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "extractor_version": EXTRACTOR_VERSION,
         "prompt_hash": prompt_hash(),
+        "prompt_full_hash": prompt_full_hash(prompt),
+        "known_versions_used": used,
+        "known_versions_snapshot": _snapshot(known),
         "asr_model": asr_model or _asr_model_id(),
         "records": records,
         "dropped_count": len(dropped),
         "dropped": dropped,
     }
     extract["result_rev"] = result_rev(aweme_id, records)
-    # 空 records 不再当失败重试（agy M-02/cf5#11）：显式 no_content 终态成功；
-    # dropped 明细落盘供人工审计（dup≠dropped：dup 是重复合并，dropped 是校验丢弃）。
+    # 空 records 不再当失败重试（agy M-02/cf5#11）：显式 no_content 终态成功。
     if not records:
         extract["no_content"] = True
-    # 兜底整体校验（envelope）
-    errs = sorted(_validator.iter_errors(extract), key=lambda e: list(e.path))
+    errs = sorted(_validator_v2.iter_errors(extract), key=lambda e: list(e.path))
     if errs:
         raise ExtractError(f"extract schema 校验失败: {errs[0].message}")
     return extract
+
+
+def _snapshot(known: set[tuple[str, str, str]]) -> str:
+    """已知版本集摘要（sha256 前 12 位，顺序无关）。"""
+    payload = "|".join("/".join(t) for t in sorted(known))
+    return hashlib.sha256(payload.encode()).hexdigest()[:12]
+
+
+_LEVEL_WORDS = ["青铜", "白银", "黄金", "钻石", "王者"]
+_HOTWORD_CAP = 100
+
+
+def gladia_hotwords(conn=None) -> list[str]:
+    """Gladia 热词（预算与运维）：系列裸名 + 等级词**固定保留**（不参与截断），剩余名额
+    给拼合 canonical——按 known_versions.created_at 降序、同时间按三元组字典序，总量截断至
+    100。conn=None 时开只读短连接读已提交版本集（读消费点，M05）；库缺失则仅返回固定词。"""
+    data = models_mod.load_series()
+    fixed = list(data.keys()) + _LEVEL_WORDS
+    close = False
+    if conn is None:
+        try:
+            conn = db.connect(str(config.DATA_DIR / "vreader.db"))
+            close = True
+        except Exception:  # noqa: BLE001
+            conn = None
+    canon: list[str] = []
+    if conn is not None:
+        try:
+            rows = db.known_versions_rows(conn)
+            rows = sorted(rows, key=lambda r: (-r["created_at"], r["series"],
+                                               r["version"], r["variant"]))
+            for r in rows:
+                try:
+                    canon.append(models_mod.compose_canonical(
+                        r["series"], r["version"], r["variant"], data=data))
+                except models_mod.ConfigError:
+                    pass
+        except Exception:  # noqa: BLE001 库无表/损坏 → 仅固定词
+            pass
+        finally:
+            if close:
+                conn.close()
+    budget = max(0, _HOTWORD_CAP - len(fixed))
+    return fixed + canon[:budget]
 
 
 def _asr_model_id() -> str:
@@ -421,12 +530,24 @@ def _conflict_rids(aweme_id: str, by_rid: dict[str, dict]) -> set[str]:
     return out
 
 
-def _classify(r: dict, is_conflict: bool) -> str:
-    """新记录的初始决策（裁决恒存的不走此处）。"""
+def _record_triple(r: dict) -> tuple[str, str, str] | None:
+    """v2 记录的 (series,version,variant)；旧记录（无 model_series 字段）→ None。"""
+    if "model_series" not in r:
+        return None
+    return (r.get("model_series", ""), r.get("model_version", ""), r.get("model_variant", ""))
+
+
+def _classify(r: dict, is_conflict: bool,
+              known: set[tuple[str, str, str]] | None) -> str:
+    """新记录的初始决策（裁决恒存的不走此处）。known=None 时不做新版本判定
+    （旧记录/未传集合场景）。已知版本只免除「新版本」这一项，低置信/空bug_id/冲突照旧。"""
     if is_conflict:
         return db.PENDING_CONFLICT
     if r.get("model_canonical") == "UNKNOWN":
         return db.PENDING_UNKNOWN                 # 2c' 模型未知 → 待补别名表
+    tri = _record_triple(r)
+    if known is not None and tri is not None and tri not in known:
+        return db.PENDING_NEW_VERSION              # M04 合法三元组但版本未登记 → 首次确认
     if not _bug_norm(r):
         return db.PENDING                          # 规则6 空 bug_id 一律不 auto_ok
     if _bug_prefix_conflict(r):
@@ -436,9 +557,12 @@ def _classify(r: dict, is_conflict: bool) -> str:
     return db.PENDING
 
 
-def apply_decisions(conn, aweme_id: str, extract: dict) -> dict:
+def apply_decisions(conn, aweme_id: str, extract: dict,
+                    known: set[tuple[str, str, str]] | None = None) -> dict:
     """归并七规则重判决策（C2）。auto_ok/pending 每次按本次重算；APPROVED 与
-    rejected_conflict 凭指纹继承（裁决恒存，规则3）；消失记录置 stale（跳过裁决）。"""
+    rejected_conflict 凭指纹继承（裁决恒存，规则3）；消失记录置 stale（跳过裁决）。
+    known：决策时点已提交的已知版本集合（M04/M05，由入口在 publish_lock 内读好传入）；
+    None = 不做新版本判定。"""
     ev, ph = extract["extractor_version"], extract["prompt_hash"]
     by_rid, dup = _dedup_records(aweme_id, extract["records"])
     conflict = _conflict_rids(aweme_id, by_rid)
@@ -451,7 +575,7 @@ def apply_decisions(conn, aweme_id: str, extract: dict) -> dict:
         if prev and prev["decision"] in db.PERSISTENT_DECISIONS:
             counts[prev["decision"]] = counts.get(prev["decision"], 0) + 1  # 恒存继承
             continue
-        decision = _classify(r, rid in conflict)
+        decision = _classify(r, rid in conflict, known)
         db.upsert_decision(conn, record_id=rid, aweme_id=aweme_id, decision=decision,
                            extractor_version=ev, prompt_hash=ph, commit=False)
         counts[decision] = counts.get(decision, 0) + 1
@@ -463,7 +587,8 @@ def apply_decisions(conn, aweme_id: str, extract: dict) -> dict:
     counts["dup"] = dup
     counts.setdefault("auto_ok", 0)
     counts["pending"] = (counts.get(db.PENDING, 0) + counts.get(db.PENDING_UNKNOWN, 0)
-                         + counts.get(db.PENDING_CONFLICT, 0))
+                         + counts.get(db.PENDING_CONFLICT, 0)
+                         + counts.get(db.PENDING_NEW_VERSION, 0))
     return counts
 
 
@@ -475,6 +600,56 @@ def result_rev(aweme_id: str, records: list[dict]) -> str:
     """本次结果版本 = 全部 rid 排序后的哈希（C9）；确认命令绑此版本防错认旧内容。"""
     ids = sorted(_record_id(aweme_id, r) for r in records)
     return hashlib.sha256("|".join(ids).encode()).hexdigest()[:12]
+
+
+def _maybe_register(conn, r: dict, approver: str) -> str | None:
+    """若记录带有效三元组且尚未登记 → register_known_version（同事务），返回其 canonical；
+    否则返回 None。UNKNOWN / 缺 series|version 不登记（M04：只登记有效三元组）。"""
+    tri = _record_triple(r)
+    if not tri or r.get("model_canonical") == "UNKNOWN" or not (tri[0] and tri[1]):
+        return None
+    if tri in db.list_known_versions(conn):
+        return None
+    db.register_known_version(conn, tri[0], tri[1], tri[2], approver, commit=False)
+    return r["model_canonical"]
+
+
+def approve_pending_for_video(conn, aweme_id: str, approver: str) -> tuple[int, list[str]]:
+    """批量确认入口（M04）：把本视频 PENDING / PENDING_NEW_VERSION 置 APPROVED，且对
+    **本次实际被批准且带有效三元组**的新版本记录同事务 register_known_version（绝不遍历
+    extract 全量）。返回 (批准数, 新登记的 canonical 列表)。extract 缺失/损坏 → 直接失败
+    返回 (0, [])，不产生任何 APPROVED（M05）。"""
+    p = _paths_extract(aweme_id)
+    if p is None:
+        return 0, []
+    try:
+        ex = json.loads(Path(p).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return 0, []
+    by_rid, _ = _dedup_records(aweme_id, ex.get("records", []))
+    ev, ph = ex.get("extractor_version", ""), ex.get("prompt_hash", "")
+    now = time.time()
+    approved = 0
+    registered: list[str] = []
+    try:
+        for rid, r in by_rid.items():
+            d = db.get_decision(conn, rid)
+            if not d or d["decision"] not in (db.PENDING, db.PENDING_NEW_VERSION):
+                continue
+            was_new = d["decision"] == db.PENDING_NEW_VERSION
+            db.upsert_decision(conn, record_id=rid, aweme_id=aweme_id, decision=db.APPROVED,
+                               extractor_version=ev, prompt_hash=ph,
+                               approved_by=approver, approved_at=now, commit=False)
+            approved += 1
+            if was_new:
+                reg = _maybe_register(conn, r, approver)
+                if reg:
+                    registered.append(reg)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return approved, registered
 
 
 def confirm_conflict_member(conn, aweme_id: str, rid: str, approver: str) -> tuple[bool, str]:
@@ -503,6 +678,9 @@ def confirm_conflict_member(conn, aweme_id: str, rid: str, approver: str) -> tup
                        extractor_version=ex.get("extractor_version", ""),
                        prompt_hash=ex.get("prompt_hash", ""),
                        approved_by=approver, approved_at=_t.time(), commit=False)
+    # 修掉「冲突里的新版本永不登记」漏洞（M04）：冲突成员分类为 pending_conflict（非
+    # pending_new_version），故按「三元组未登记」判定，胜者若带新版本则同事务登记。
+    registered = _maybe_register(conn, by_rid[target], approver)
     for g in group:
         if g == target:
             continue
@@ -513,7 +691,10 @@ def confirm_conflict_member(conn, aweme_id: str, rid: str, approver: str) -> tup
                                extractor_version=ex.get("extractor_version", ""),
                                prompt_hash=ex.get("prompt_hash", ""), commit=False)
     conn.commit()
-    return True, f"已确认该冲突成员入榜，同组其余 {len(group) - 1} 条标记为落败。"
+    msg = f"已确认该冲突成员入榜，同组其余 {len(group) - 1} 条标记为落败。"
+    if registered:
+        msg += f"\n已登记新版本：{registered}（此后该版本不再因新版本待确认）"
+    return True, msg
 
 
 def _paths_extract(aweme_id: str) -> str | None:
@@ -524,6 +705,7 @@ def _paths_extract(aweme_id: str) -> str | None:
 _DECISION_LABEL = {
     db.AUTO_OK: "已上榜", db.APPROVED: "已确认上榜", db.PENDING: "待确认",
     db.PENDING_UNKNOWN: "待确认(模型未知)", db.PENDING_CONFLICT: "待确认(矛盾)",
+    db.PENDING_NEW_VERSION: "待确认(新版本)",
     db.REJECTED_CONFLICT: "冲突落败", db.STALE: "已过期", db.EXPIRED: "已过期",
 }
 
@@ -543,5 +725,12 @@ def detail_view(conn, aweme_id: str) -> str:
         label = _DECISION_LABEL.get(d["decision"], d["decision"]) if d else "?"
         lines.append(
             f"[{rid[:8]}] {r['model_canonical']} · {r['bug_level']} · score={r.get('score')} · "
-            f"conf={r.get('confidence')} → {label}\n    证据：{r.get('evidence_quote', '')}")
+            f"conf={r.get('confidence')} → {label}")
+        # UNKNOWN/新版本：展示 raw 原文 + 归一三元组，让管理员看清一次确认的影响
+        if d and d["decision"] in (db.PENDING_UNKNOWN, db.PENDING_NEW_VERSION):
+            tri = "/".join(x for x in (r.get("model_series", ""), r.get("model_version", ""),
+                                       r.get("model_variant", "")) if x)
+            lines.append(f"    raw原文：{r.get('model_raw', '')}"
+                         + (f" · 归一：{tri}" if tri else " · 归一：未能锚定"))
+        lines.append(f"    证据：{r.get('evidence_quote', '')}")
     return "\n".join(lines)
