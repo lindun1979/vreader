@@ -33,6 +33,8 @@
 - **提取**：`LLM_BACKEND` 可选 `agy`（Antigravity CLI，生产主通道，`LLM_MODEL` 走 agy，
   兜底链走 :8317；生产直连不通须配 `AGY_PROXY` 代理）/ `openai`（:8317 cliproxy）/ `claude`
   （本地 CLI）+ 频道 prompt + 模型系列表（LLM 出 series/version/variant，代码提及锚定拼 canonical）。
+  **轮次驱动打分**：LLM 出「第几轮做对」(`solved_round`)，代码反推得分；钻石/王者第4轮做对
+  = 白做（0分但已解，榜单显示第[4]次），区别于「没做对」。
 - **状态**：SQLite（WAL、每线程独立连接、原子领取）；崩溃恢复按落盘产物前推跳过
   阶段（产物齐全时不依赖上游网络）；recover 递增 retry_count 防毒丸崩溃循环。
 - **通知**：outbox 表，与任务终态同事务写入（`db.finalize_task`，无静默失败），

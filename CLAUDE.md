@@ -13,7 +13,10 @@
 - 提取 LLM：生产机 **agy（Antigravity CLI）gemini-3.7-flash-medium 主**（生产链路 gold 97 格
   96/97≈99%；LLM_BACKEND=agy，直连不通须配 AGY_PROXY 代理，见 [[agy-on-prod-via-proxy]]），
   兜底 :8317 cliproxy 的 gemini-3.5-flash-lite（gold 86.6%）；配 LLM_MODEL/LLM_MODEL_FALLBACK。
-  得分驱动（LLM 只提 score，代码反推 solved/rounds）。标题作对战名单提召回。
+  **轮次驱动**（2026-09 改，用户确认）：LLM 出 `solved_round`（第几轮做对；钻石/王者可到
+  第4轮=白做0分但已解，0=没做对），代码 `derive_from_round` 反推 score/solved/rounds
+  ——修掉钻石/王者 score=0 二义（第4轮做对 vs 没做对无法区分）。board 第4轮做对显示第[4]次、
+  计解出、0分。标题作对战名单提召回。
 - 模型归一（**series-norm**，见 `core/models.py` + `docs/plans/vreader-series-norm-plan-v5.md`）：
   `models.yml` 是**系列表**（format 身份模板 + 系列别名 + 两级昵称 + 变体 + seed 版本）。
   LLM 出 `model_raw/series/version/variant`（**不出 canonical，均不可信**）；代码对
@@ -29,6 +32,8 @@
   未见过版本首次出现 → `pending_new_version`，`vr确认` 同事务 `register_known_version`
   入 `known_versions` 表（三入口：批量/冲突赢家/rev）。extract 带 `schema_rev=2`；旧产物
   （无 schema_rev）canonical 须 ∈ 冻结 `LEGACY_CANONICALS`，`validate_extract` 双轨判。
+  模型分类（用户 2026-09 拍板，勿改）：**Claude Opus 4.8 ≠ Opus 5.0**（去 version_map 4.8→5）、
+  **Fable 5 ≠ Fable 5.1**、**GPT 5.6 有 Sol/Terra/Luna 三变体**（均已进 models.yml seed）。
 - ASR：**Gladia 云转写主**（gold 97 格 100% vs SenseVoice 89.7%，~11s/条，带 models.yml
   热词；GLADIA_API_KEY 配 .env，免费 10h/月），失败自动回落本地 SenseVoiceSmall（CPU）。
   SenseVoice 长视频**必须分块**转写（整段喂入峰值 10GB+ 拖垮 16G 机）。
