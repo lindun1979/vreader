@@ -21,12 +21,15 @@ from pathlib import Path
 # (输入文本, 期望 endpoint) 契约用例
 CASES = [
     ("vr帮助", "/help"),
+    ("vr 帮助", "/help"),                                     # vr 与词间空格
     ("/vreader 帮助", "/help"),
     ("vr明细 7681587976547208511", "/detail"),
+    ("vr 明细 7681587976547208511", "/detail"),
     ("vr确认 7681587976547208511", "/confirm"),
     ("vr确认 7681587976547208511 a1b2c3d4", "/confirm"),      # 逐条冲突记录码
-    ("vr确认 7681587976547208511 rev:abc123", "/confirm"),    # 绑版本
+    ("vr 确认 7681587976547208511 rev:abc123", "/confirm"),   # 绑版本 + 空格
     ("vr榜单", "/board"),
+    ("vr 榜单", "/board"),
     ("看看 https://v.douyin.com/abc123/ 复制打开抖音", "/ingest"),
     ("今天天气不错", None),
     ("这个榜单看起来不错啊", None),

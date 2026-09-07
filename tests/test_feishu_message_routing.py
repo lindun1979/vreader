@@ -33,7 +33,18 @@ def test_detail_command():
 
 def test_help_command():
     assert routing.classify("vr帮助") == "help"
+    assert routing.classify("vr 帮助") == "help"        # 带空格
     assert routing.classify("/vreader 帮助") == "help"
+
+
+def test_vr_prefix_tolerates_space():
+    # vr 与命令词间可选空格：四类命令都认
+    assert routing.classify("vr 榜单") == "board"
+    assert routing.classify("vr 明细 7681587976547208511") == "detail"
+    assert routing.classify("vr 确认 7681587976547208511") == "confirm"
+    assert routing.classify("vr 确认 7681587976547208511 a1b2c3d4") == "confirm"
+    assert routing.parse_confirm("vr 确认 vid rev:abc") == ("vid", "rev:abc")
+    assert routing.parse_detail("vr 明细 vid9") == "vid9"
 
 
 def test_help_word_in_sentence_not_matched():

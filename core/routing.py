@@ -10,10 +10,11 @@ from __future__ import annotations
 import re
 
 _DOUYIN_URL = re.compile(r"(v\.douyin\.com/|douyin\.com/(?:video|note)/|iesdouyin\.com/)")
-_HELP = re.compile(r"^\s*(?:/vreader\s+帮助|vr帮助)\s*$")
-_BOARD = re.compile(r"^\s*(?:/vreader\s+榜单|vr榜单)\s*$")
-_DETAIL = re.compile(r"^\s*(?:/vreader\s+明细|vr明细)\s+(\S+)\s*$")
-_CONFIRM = re.compile(r"^\s*(?:/vreader\s+确认|vr确认)\s+(\S+)(?:\s+(\S+))?\s*$")
+# vr 与命令词之间允许可选空格（用户常写「vr 帮助」；vr帮助 / vr 帮助 都认）
+_HELP = re.compile(r"^\s*(?:/vreader\s+帮助|vr\s*帮助)\s*$")
+_BOARD = re.compile(r"^\s*(?:/vreader\s+榜单|vr\s*榜单)\s*$")
+_DETAIL = re.compile(r"^\s*(?:/vreader\s+明细|vr\s*明细)\s+(\S+)\s*$")
+_CONFIRM = re.compile(r"^\s*(?:/vreader\s+确认|vr\s*确认)\s+(\S+)(?:\s+(\S+))?\s*$")
 
 
 def classify(text: str) -> str | None:
