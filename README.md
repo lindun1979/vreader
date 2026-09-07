@@ -59,6 +59,7 @@ cp .env.example .env   # 填凭据，chmod 600
 pytest -q                                   # 全部单测
 python -m core.cli "<抖音分享链接>"          # 手动处理一条（建真值集）
 python -m core.cli --board                  # 打印榜单（纯读，不取写锁）
+python -m core.cli --render                  # 用现有 extract 重渲染 board.md（不重提取）
 python -m core.cli --reprocess <aweme_id>   # 现有 transcript 重跑提取+决策（prompt/别名改动后）
 python -m core.cli --retranscribe <aweme_id> # 删 transcript 强制用 Gladia 重转+提取（修兜底 ASR 数据）
 python -m core.service                       # 起服务
