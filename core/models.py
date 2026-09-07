@@ -257,10 +257,10 @@ def _match_series_from_raw(raw: str, data: dict) -> tuple[str | None, str]:
     for tok, s, var in tokens:
         if not tok:
             continue
-        # 拉丁 token：前不接字母数字、后不接字母（允许后接版本数字，如 grm5.3）；
-        # 含 CJK 的 token 直接子串匹配
+        # 拉丁 token：前不接字母数字；后允许接版本字母+数字（deepthickv4）——用「不接
+        # 连续 ≥2 字母」放行单个版本字母 v/k，同时挡住 gm→gmail 这类词内误命中。
         if re.search(r"[a-z0-9]", tok):
-            hit = re.search(rf"(?<![a-z0-9]){re.escape(tok)}(?![a-z])", src) is not None
+            hit = re.search(rf"(?<![a-z0-9]){re.escape(tok)}(?![a-z]{{2}})", src) is not None
         else:
             hit = tok in src
         if hit:
@@ -268,36 +268,66 @@ def _match_series_from_raw(raw: str, data: dict) -> tuple[str | None, str]:
             break
     if series is not None and not variant:
         for w, var in generic.items():
+            # 变体词允许紧贴版本数字（v4flash）：前不接字母、后不接字母
             if var in _series_variants(data[series]) and re.search(
-                    rf"(?<![a-z0-9]){re.escape(w)}(?![a-z0-9])", src):
+                    rf"(?<![a-z]){re.escape(w)}(?![a-z])", src):
                 variant = var
                 break
     return series, variant
 
 
-def _coref(series: str, variant: str, anchors: dict) -> tuple[str | None, str]:
-    """共指兜底（version 为空）：从本视频该系列锚定组合集中选。
-    - 已绑 variant：筛 variant 相符者，唯一→采用，否则 UNKNOWN。
-    - 未绑 variant：锚定组合恰一个→整体采用（含 variant），否则 UNKNOWN。
-    返回 (version|None, variant)。"""
+def _known_has(known: set | None, series: str, version_raw: str, variant: str,
+               data: dict) -> bool:
+    """(series, version_map(version), variant) 是否 ∈ 已知版本集。"""
+    if not known:
+        return False
+    mv = _apply_version_map(series, norm_version(version_raw), data)
+    return (series, mv, variant) in known
+
+
+def _unique_known_variant(known: set | None, series: str, version_raw: str,
+                          data: dict) -> str | None:
+    """(series, version) 在 known 中若恰有一个变体 → 返回该变体，否则 None。"""
+    if not known:
+        return None
+    mv = _apply_version_map(series, norm_version(version_raw), data)
+    variants = {var for (s, v, var) in known if s == series and v == mv}
+    return next(iter(variants)) if len(variants) == 1 else None
+
+
+def _coref(series: str, variant: str, anchors: dict, known: set | None,
+           data: dict) -> tuple[str | None, str, bool]:
+    """共指兜底（version 为空）。返回 (version|None, variant, from_known)。
+    ① 本视频锚定组合优先：已绑 variant 筛相符者、未绑取全部，唯一→采用。
+    ② 本视频歧义（≥2 组合）：用**已知版本集**破歧——恰一个候选组合是已知版本 → 采用
+       （版本本身仍是本视频口播的，known 只破平局，不引入未口播的版本）；否则 UNKNOWN。
+    ③ 本视频无锚点：退已知版本集——(series[,variant]) 在 known 中唯一 → 采用（博主对单版本
+       模型常只说裸名、版本从不口播，如「豆包」=Doubao Seed 2.1）；多个 → UNKNOWN。
+    ②③ 用 known 破歧/兜底时 from_known=True（跳过组合闸——known 集即权威、无法误绑错版本）。"""
     combos = anchors["combos"].get(series, set())
-    if not combos:
-        return None, variant
-    if variant:
-        cand = [c for c in combos if c[1] == variant]
-    else:
-        cand = list(combos)
+    cand = [c for c in combos if c[1] == variant] if variant else list(combos)
     if len(cand) == 1:
-        return cand[0][0], cand[0][1]
-    return None, variant
+        return cand[0][0], cand[0][1], False
+    if len(cand) > 1:
+        kc = [c for c in cand if _known_has(known, series, c[0], c[1], data)]
+        if len(kc) == 1:
+            return kc[0][0], kc[0][1], True   # known 破本视频锚定歧义
+        return None, variant, False
+    # 本视频无锚点 → 已知版本集唯一兜底
+    if known:
+        kc = {(v, var) for (s, v, var) in known if s == series and (not variant or var == variant)}
+        if len(kc) == 1:
+            v, var = next(iter(kc))
+            return v, var, True
+    return None, variant, False
 
 
 def resolve_record(model_raw: str, model_series: str, model_version: str,
-                   model_variant: str, anchors: dict, *, data: dict | None = None
-                   ) -> tuple[str, str, str, str]:
+                   model_variant: str, anchors: dict, *, data: dict | None = None,
+                   known: set | None = None) -> tuple[str, str, str, str]:
     """把 LLM 的 (raw, series, version, variant) 解析为 (canonical, series, version, variant)。
     canonical=='UNKNOWN' 时后三者为 ''。plan M02/M03 六步。version 存**已过 version_map**
-    的归一值，与 known_versions 三元组一致。"""
+    的归一值，与 known_versions 三元组一致。known：已知版本集，供裸名单版本模型共指兜底。"""
     data = data if data is not None else load_series()
     UNK = ("UNKNOWN", "", "", "")
 
@@ -341,15 +371,24 @@ def resolve_record(model_raw: str, model_series: str, model_version: str,
             version = cv
             break
 
-    # 步骤4：共指兜底
+    # 步骤4：共指兜底（本视频锚定优先，无锚点/歧义退已知版本集）
+    from_known = False
     if version is None:
-        version, variant = _coref(series, variant, anchors)
+        version, variant, from_known = _coref(series, variant, anchors, known, data)
         if version is None:
             return UNK
 
-    # M03 总闸：最终 (version, variant) 组合必须 ∈ 锚定组合集
-    if (version, variant) not in anchors["combos"].get(series, set()):
+    # M03 总闸：最终 (version, variant) 组合必须 ∈ 锚定组合集。
+    # 例外：来自已知版本集的兜底/破歧（from_known）——known 集即权威，跳过本视频组合闸。
+    if not from_known and (version, variant) not in anchors["combos"].get(series, set()):
         return UNK
+
+    # 变体协调：version 口播但 variant 未提及（如「step 3.7」）——若 (series,version) 在
+    # known 中恰有一个变体、且当前 (version,'') 非已知组合 → 采用该唯一已知变体（Step→Flash）。
+    if variant == "" and not _known_has(known, series, version, "", data):
+        alt = _unique_known_variant(known, series, version, data)
+        if alt is not None:
+            variant = alt
 
     # 步骤6：拼合（round-trip 撞名校验）+ version_map 归一
     try:

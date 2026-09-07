@@ -400,7 +400,8 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
         # 提及锚定解析（LLM 的 raw/series/version/variant 不可信，须过源文本锚定）
         canonical, series, version, variant = models_mod.resolve_record(
             r.get("model_raw", ""), r.get("model_series", ""),
-            r.get("model_version", ""), r.get("model_variant", ""), anchors, data=data)
+            r.get("model_version", ""), r.get("model_variant", ""), anchors,
+            data=data, known=known)
         r["model_canonical"] = canonical
         r["model_series"], r["model_version"], r["model_variant"] = series, version, variant
         # 由得分反推 solved/rounds（确定性，不靠 LLM 算）

@@ -20,6 +20,11 @@
   transcript+title 做「提及锚定」（`build_anchors`）产出 `(series,version[,variant])` 锚点，
   `resolve_record` 六步（raw 拆词纠错 → 版本锚定核验 → 系列纠正 → 共指兜底 → 组合锚定总闸
   → `compose_canonical` round-trip 撞名校验）拼出 canonical。version 靠源文本数字，不靠昵称
+  **共指兜底扩展（偏离 plan 严格「同视频共指」，因真实 ASR 常不口播版本/糊系列名）**：
+  本视频无锚点时退**已知版本集**唯一兜底（裸「豆包」→Doubao Seed 2.1）；本视频锚定歧义时
+  用 known 破歧（ASR 糊出「豆包2」+「豆包2.1」→取已知 2.1）；version 口播但变体未口播且
+  (series,version) 仅一个已知变体时补全（「step3.7」→Step 3.7 Flash）。**均只用 known 破歧/
+  兜底、绝不覆盖已口播版本**（多个已知版本且无口播 → UNKNOWN，不臆断；见测试守卫）。
   （「一哥/火星刺客」随期指系列当时最新版本，只绑系列；见 [[glm-yige-dynamic-reference]]）。
   未见过版本首次出现 → `pending_new_version`，`vr确认` 同事务 `register_known_version`
   入 `known_versions` 表（三入口：批量/冲突赢家/rev）。extract 带 `schema_rev=2`；旧产物

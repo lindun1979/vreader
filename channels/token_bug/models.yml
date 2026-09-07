@@ -30,7 +30,8 @@ GLM:
 DeepSeek:
   format: "DeepSeek V{v}"
   version_letter: V
-  aliases: [deepseek, 深度求索, 深度球锁, ds]
+  # 别名含 ASR 常见糊写（deepsick/deepseq/deepthick/gipsec/epsic 等），系列名靠这些锚定
+  aliases: [deepseek, deep seek, deepsick, deep sick, deepseq, deepthick, gipsec, epsic, 深度求索, 深度球锁, ds]
   variants:
     Pro:
       aliases: [pro]
@@ -74,7 +75,7 @@ Doubao Seed:
 
 Step:
   format: "Step {v}"
-  aliases: [step, 阶跃, 阶跃星辰]
+  aliases: [step, steep, stayp, stay, 阶跃, 阶跃星辰]
   variants:
     Flash:
       aliases: [flash]
@@ -116,7 +117,8 @@ GPT:
 
 Gemini:
   format: "Gemini {v}"
-  aliases: [gemini, 双子星, 北美大豆包, 北美豆包]
+  # 别名含 ASR 糊写（germany/german/jermony/jermaine 等）
+  aliases: [gemini, germany, german, jermony, jermaine, 双子星, 北美大豆包, 北美豆包]
   variants:
     Flash:
       aliases: [flash, manflash, manyflash, manf]
