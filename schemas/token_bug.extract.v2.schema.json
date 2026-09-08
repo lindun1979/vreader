@@ -17,12 +17,6 @@
     "dropped_count": {"type": "integer", "minimum": 0},
     "result_rev": {"type": "string"},
     "no_content": {"type": "boolean"},
-    "coverage_runs": {"type": "integer", "minimum": 1, "maximum": 2},
-    "coverage_rerun_status": {"type": "string", "enum": ["completed", "failed", "skipped_budget"]},
-    "coverage_trigger_missing": {"type": "array", "items": {"type": "string"}},
-    "coverage_missing": {"type": "array", "items": {"type": "string"}},
-    "coverage_anchor_series": {"type": "array", "items": {"type": "string"}},
-    "prompt_full_hash_rerun": {"type": "string"},
     "prompt_full_hash": {"type": "string"},
     "known_versions_snapshot": {"type": "string"},
     "known_versions_used": {
@@ -39,7 +33,7 @@
       "items": {
         "type": "object",
         "required": ["reason"],
-        "properties": {"reason": {"type": "string"}, "record": {}, "pass": {"type": "integer"}}
+        "properties": {"reason": {"type": "string"}, "record": {}}
       }
     },
     "extracted_at": {"type": "string", "minLength": 1},
@@ -66,8 +60,7 @@
           "rounds": {"type": ["integer", "null"], "minimum": 1},
           "solved": {"type": "boolean"},
           "evidence_quote": {"type": "string", "minLength": 10},
-          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-          "single_run": {"type": "boolean"}
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1}
         },
         "allOf": [
           {
