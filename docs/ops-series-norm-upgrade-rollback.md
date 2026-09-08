@@ -81,3 +81,21 @@ cp -r ~/workspace/vreader/data /tmp/vreader-eval-copy   # 隔离副本，不碰�
 .venv/bin/python ops/eval_gold.py /tmp/vreader-eval-copy --min-extract 96
 ```
 逐格 diff 无上榜回归、提取准确率 ≥ 门槛方可发布。
+
+## 6. 覆盖复跑（coverage rerun）：两阶段部署与回滚下界
+
+覆盖复跑功能（`docs/plans/vreader-extract-coverage-rerun-plan-v4.md`）拆两个 commit 分开部署：
+- **Commit A（schema 兼容层）**：仅给 `schemas/token_bug.extract.v2.schema.json` 加可选字段
+  （`coverage_runs`/`coverage_rerun_status`/`coverage_trigger_missing`/`coverage_missing`/
+  `coverage_anchor_series`/`prompt_full_hash_rerun` + records 的 `single_run`）。行为零变化。
+- **Commit B（功能）**：`core/extract.py` 覆盖检查+条件二跑+状态机合并、`_classify` 单边
+  强制 pending、`core/pipeline.py` deadline 传递+回执文案、`ops/audit_extract_coverage.py`。
+
+**回滚下界 = Commit A（严格约束）**：一旦 Commit B 上线并产出过带新字段的 extract.json，
+**只能回滚到 Commit A，绝不能回到 Commit A 之前**。原因：更早版本的 schema 带
+`additionalProperties: false`，会把新字段产物判为坏缓存 → `load_valid_extract` 留证重建 →
+LLM 非确定性重跑把准确旧榜跑坏（learnings `board-reprocess-nondeterminism`）。
+`tests/test_extract_coverage_rollback_compat.py` 守卫 Commit A 能读带全部新字段的产物。
+
+**灰度门禁**：见 plan v4 Step 8（样本 ≥8 视频含 ≥3 已核对、观察期 14 天/≥10 任务、触发率
+≤30% 放开 / >50% 回滚 / 30–50% 延一期由业务负责人书面决定）。

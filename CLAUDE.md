@@ -17,6 +17,15 @@
   第4轮=白做0分但已解，0=没做对），代码 `derive_from_round` 反推 score/solved/rounds
   ——修掉钻石/王者 score=0 二义（第4轮做对 vs 没做对无法区分）。board 第4轮做对显示第[4]次、
   计解出、0分。标题作对战名单提召回。
+- **覆盖复跑**（防整段丢弃，plan `vreader-extract-coverage-rerun-plan-v4.md`）：首跑后用
+  `build_anchors` 做**系列级**锚点覆盖检查，某锚点系列整段缺失且真调了 LLM（claude_text 注入
+  路径不触发）→ 带 nonce **复跑一次**（破缓存折叠）。仅 `coverage_rerun_status=completed` 才合并
+  两跑：同 rid 共识 dedup、**单边记录**（仅一跑出现）标 `single_run` 经 `_classify` 强制 pending
+  人工确认、同槽不同分走现成 pending_conflict；failed/skipped_budget 保留首跑不合并不标记，
+  回执明示「未经复跑验证」。deadline 传入 `_call_llm` 逐次裁剪（agy timeout+30s 包装计入真实
+  墙钟），二跑发起门 = 剩余 ≥ LLM_TIMEOUT+120。触发时锚点/缺失系列入 envelope 快照
+  （`coverage_anchor_series`/`coverage_trigger_missing`，抗 models.yml 漂移，永不改写）。存量审计：
+  `ops/audit_extract_coverage.py`（只读，列疑似丢弃视频清单，人工决定逐个 --reprocess）。
 - 模型归一（**series-norm**，见 `core/models.py` + `docs/plans/vreader-series-norm-plan-v5.md`）：
   `models.yml` 是**系列表**（format 身份模板 + 系列别名 + 两级昵称 + 变体 + seed 版本）。
   LLM 出 `model_raw/series/version/variant`（**不出 canonical，均不可信**）；代码对
@@ -64,7 +73,7 @@ reprocess/迁移等 CLI 写操作需 flock，**必须先 `launchctl unload` 停 
 launchd 管理（禁 nohup），登记运维斯 SERVICES.md。
 
 ## 测试
-`pytest -q`（177 项全绿，**只在研发机跑**；生产机不跑 pytest）。手动处理：
+`pytest -q`（221 项全绿，**只在研发机跑**；生产机不跑 pytest）。手动处理：
 `python -m core.cli "<链接>"`；重跑提取：`--reprocess <id>`；强制用 Gladia 重转（修此前落
 兜底 ASR 的数据，删 transcript 走全量管线）：`--retranscribe <id>`。
 真值集：`tests/gold/token_bug/gold.json`（用户人工标注 7 视频得分 + aweme_id 映射，进仓）；

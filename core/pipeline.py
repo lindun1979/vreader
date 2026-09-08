@@ -115,6 +115,26 @@ def _prior_asr_model(extract_path: str) -> str | None:
         return None
 
 
+def _coverage_notice(ex: dict) -> str:
+    """覆盖复跑回执片段（plan v4 Step 6）：completed / failed / skipped_budget 各态与两跑
+    均缺提示；无触发（普通单跑）返回空串。failed/skipped 明示「未经复跑验证」不伪装成两跑均缺。"""
+    status = ex.get("coverage_rerun_status")
+    if not status:
+        return ""
+    trig = "、".join(ex.get("coverage_trigger_missing") or []) or "（无）"
+    if status == "completed":
+        n_single = sum(1 for r in ex.get("records", []) if r.get("single_run"))
+        msg = f"\n⚠️ 触发覆盖复跑（疑似丢弃：{trig}）；单边记录 {n_single} 条已强制待确认。"
+        miss = ex.get("coverage_missing") or []
+        if miss:
+            msg += f"\nℹ️ 两跑均未提取到：{'、'.join(miss)}（可能标题提及但未实测）。"
+        return msg
+    # failed / skipped_budget
+    why = "失败" if status == "failed" else "预算不足"
+    return (f"\n⚠️ 覆盖复跑未完成（{why}）：首跑缺失系列 {trig} **未经复跑验证**，"
+            f"本次结果仅含首跑。")
+
+
 def _finish(conn, aweme_id: str, chat_id: str, ex: dict, p: dict) -> str:
     """决策重判 + 渲染 + 终态成功 + 清理媒体（恢复捷径与正常路径共用）。
     M05 统一顺序：publish_lock → 读已提交 known 集合 B → 决策（单事务）→ 渲染。
@@ -137,6 +157,7 @@ def _finish(conn, aweme_id: str, chat_id: str, ex: dict, p: dict) -> str:
         if counts["pending"]:
             msg += (f"\n👉 查看明细：vr明细 {aweme_id}"
                     f"\n👉 批量确认：vr确认 {aweme_id}")
+    msg += _coverage_notice(ex)
     if counts.get("approved_stale"):
         msg += f"\n⚠️ {counts['approved_stale']} 条此前已确认的记录本次消失（已下榜）。"
     if config.GLADIA_API_KEY and ex.get("asr_model") != "gladia-v2":
@@ -200,7 +221,8 @@ def process_task(conn, task) -> str:
         if ex is None:
             known_a = db.list_known_versions(conn)  # 提取输入集合 A（build 前读）
             ex = extract_mod.build_extract(aweme_id=aweme_id, title=title,
-                                           transcript=transcript, known=known_a)
+                                           transcript=transcript, known=known_a,
+                                           deadline=deadline)  # 覆盖复跑预算门/裁剪
             util.atomic_write_text(p["extract"],
                                    json.dumps(ex, ensure_ascii=False, indent=2))
         return _finish(conn, aweme_id, chat_id, ex, p)
@@ -229,8 +251,10 @@ def reprocess(conn, aweme_id: str) -> str:
     task = db.get_task(conn, aweme_id)
     title = (task["title"] if task else "") or ""
     known_a = db.list_known_versions(conn)  # 提取输入集合 A（build 前读）
+    deadline = time.monotonic() + config.TASK_BUDGET_S  # reprocess 自建预算（覆盖复跑用）
     ex = extract_mod.build_extract(aweme_id=aweme_id, title=title, transcript=transcript,
-                                   asr_model=_prior_asr_model(p["extract"]), known=known_a)
+                                   asr_model=_prior_asr_model(p["extract"]), known=known_a,
+                                   deadline=deadline)
     util.atomic_write_text(p["extract"], json.dumps(ex, ensure_ascii=False, indent=2))
     with lock.publish_lock:
         known_b = db.list_known_versions(conn)

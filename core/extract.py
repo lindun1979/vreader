@@ -190,14 +190,28 @@ def _dispatch(transport: str, model: str | None, prompt: str, *, timeout: int) -
     return _call_openai(prompt, timeout=timeout, model=model)
 
 
-def _call_llm(prompt: str, *, timeout: int | None = None) -> str:
-    timeout = timeout or config.LLM_TIMEOUT
+# deadline 逐次裁剪常量（plan v4 Step 4）：agy 给 subprocess 的墙钟是 timeout+30s（_call_agy
+# 包装），另留落盘/通知尾量；单次可用窗口低于 _LLM_MIN_CALL_S 时不再发起，抛可重试错——
+# 绝不跨 deadline 发请求（含 agy 30s 包装的真实墙钟计入）。
+_LLM_DEADLINE_TAIL_S = 90
+_LLM_MIN_CALL_S = 30
+
+
+def _call_llm(prompt: str, *, timeout: int | None = None,
+              deadline: float | None = None) -> str:
+    base = timeout or config.LLM_TIMEOUT
     # 主通道 + 兜底链；每个尝试重试一次（偶发超时/空返回/授权不可用）
     last: Exception | None = None
     for transport, model in _providers():
         for _ in range(2):
+            eff = base
+            if deadline is not None:  # 按剩余预算裁剪本次 timeout（含 agy 30s 包装的墙钟）
+                avail = int(deadline - time.monotonic() - _LLM_DEADLINE_TAIL_S)
+                if avail < _LLM_MIN_CALL_S:
+                    raise last or ExtractError("预算不足，放弃 LLM 调用（deadline 裁剪）")
+                eff = min(base, avail)
             try:
-                out = _dispatch(transport, model, prompt, timeout=timeout)
+                out = _dispatch(transport, model, prompt, timeout=eff)
                 if out.strip():
                     return out
                 last = ExtractError("LLM 返回空")
@@ -401,23 +415,11 @@ def load_valid_extract(extract_path: str, *, transcript: str | None = None,
         return None
 
 
-def build_extract(*, aweme_id: str, title: str, transcript: str,
-                  claude_text: str | None = None, asr_model: str | None = None,
-                  known: set[tuple[str, str, str]] | None = None) -> dict:
-    """把 LLM 输出组装为 v2 extract 对象并做全部校验；不写库。校验失败抛 ExtractError。
-    LLM 输出 model_raw + model_series/version/variant（不出 canonical）；代码经**提及锚定**
-    解析出 canonical + 归一三元组（M02/M03）。
-    known：本次注入 prompt 的已知版本三元组集合（溯源 known_versions_used，M08）；None=空。
-    asr_model：显式指定该转写的 ASR 引擎（reprocess 不重转时传原引擎）。"""
-    known = known or set()
-    data = models_mod.load_series()
-    anchors = models_mod.build_anchors(transcript, title, data=data)
-    prompt = _build_prompt(transcript, title, known=known)
-    if claude_text is None:
-        claude_text = _call_llm(prompt)
+def _resolve_pass(claude_text: str, norm_tx: str, anchors: dict, data: dict,
+                  known: set[tuple[str, str, str]]) -> tuple[list[dict], list[dict]]:
+    """一次提取 pass：LLM 文本 → 逐条锚定解析 + 轮次反推 + 校验 + evidence 子串。
+    坏记录丢入 dropped（不拖垮整条视频）。返回 (records, dropped)。"""
     raw_records = _parse_records_json(claude_text)
-
-    norm_tx = _normalize_quote(transcript)
     records, dropped = [], []
     for r in raw_records:
         r = dict(r)
@@ -448,6 +450,103 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
             dropped.append({"record": r, "reason": "evidence 非转写子串"})
             continue
         records.append(r)
+    return records, dropped
+
+
+def _coverage_missing(anchors: dict, records: list[dict]) -> set[str]:
+    """锚点覆盖缺口（plan v4 Step 2）：源文本提及了版本邻接的系列（anchors["versions"] 的
+    key），但提取记录里完全没有该系列 → 疑似整段丢弃。UNKNOWN 记录 series 为空不算覆盖。"""
+    covered = {r["model_series"] for r in records if r.get("model_series")}
+    return set(anchors["versions"]) - covered
+
+
+def _merge_runs(aweme_id: str, records1: list[dict],
+                records2: list[dict]) -> list[dict]:
+    """合并两跑记录（plan v4 Step 2）：同 rid（两跑一致/共识）留 confidence 高者、不标单边；
+    单边 rid（仅一跑出现，含同槽不同分的对立两条）置 single_run=True。顺序：run1 先、run2 独有在后。"""
+    d1, _ = _dedup_records(aweme_id, records1)
+    d2, _ = _dedup_records(aweme_id, records2)
+    merged = []
+    for rid, r in d1.items():
+        if rid in d2:
+            best = r if r.get("confidence", 0) >= d2[rid].get("confidence", 0) else d2[rid]
+            best = dict(best)
+            best.pop("single_run", None)
+            merged.append(best)
+        else:
+            r = dict(r)
+            r["single_run"] = True
+            merged.append(r)
+    for rid, r in d2.items():
+        if rid not in d1:
+            r = dict(r)
+            r["single_run"] = True
+            merged.append(r)
+    return merged
+
+
+def _rerun_budget_ok(deadline: float | None) -> bool:
+    """二跑发起门（plan v4 Step 4）：剩余预算须够一次完整 LLM_TIMEOUT 调用 + 120s 余量
+    （覆盖 agy 30s 包装 + 落盘/通知）；deadline=None（测试/无预算上下文）恒放行。"""
+    if deadline is None:
+        return True
+    return (deadline - time.monotonic()) >= config.LLM_TIMEOUT + 120
+
+
+def build_extract(*, aweme_id: str, title: str, transcript: str,
+                  claude_text: str | None = None, asr_model: str | None = None,
+                  known: set[tuple[str, str, str]] | None = None,
+                  deadline: float | None = None) -> dict:
+    """把 LLM 输出组装为 v2 extract 对象并做全部校验；不写库。校验失败抛 ExtractError。
+    LLM 输出 model_raw + model_series/version/variant（不出 canonical）；代码经**提及锚定**
+    解析出 canonical + 归一三元组（M02/M03）。
+    known：本次注入 prompt 的已知版本三元组集合（溯源 known_versions_used，M08）；None=空。
+    asr_model：显式指定该转写的 ASR 引擎（reprocess 不重转时传原引擎）。
+    deadline：任务总预算 monotonic 截止点（None=不限）；传入则二跑发起门 + _call_llm 逐次裁剪。
+
+    覆盖复跑（plan v4）：首跑后若锚点系列有整段缺失且本次真调了 LLM（claude_text is None），
+    带 nonce 复跑一次（破缓存折叠）；仅 completed 才合并两跑，单边记录标 single_run 强制人工确认；
+    failed/skipped_budget 保留首跑不合并不标记。"""
+    known = known or set()
+    data = models_mod.load_series()
+    anchors = models_mod.build_anchors(transcript, title, data=data)
+    prompt = _build_prompt(transcript, title, known=known)
+    norm_tx = _normalize_quote(transcript)
+
+    llm_called = claude_text is None
+    if claude_text is None:
+        claude_text = _call_llm(prompt, deadline=deadline)
+    records, dropped = _resolve_pass(claude_text, norm_tx, anchors, data, known)
+
+    # 覆盖复跑（仅真调 LLM 时；claude_text 注入路径——测试/gold——不触发，保确定性）
+    cov: dict = {}
+    prompt_full_rerun = None
+    missing = _coverage_missing(anchors, records)
+    if missing and llm_called:
+        cov["coverage_trigger_missing"] = sorted(missing)          # 触发时点快照（永不改写）
+        cov["coverage_anchor_series"] = sorted(anchors["versions"])  # 溯源：当时锚点系列集
+        if not _rerun_budget_ok(deadline):
+            cov["coverage_rerun_status"] = "skipped_budget"
+        else:
+            # nonce 破缓存折叠：agy/代理/上游任何按完整输入的缓存都会因此 miss（[[llm-cache-...]]）
+            rerun_prompt = (prompt +
+                            f"\n（本行为重试标识，忽略：coverage_rerun_nonce={os.urandom(8).hex()}）")
+            prompt_full_rerun = prompt_full_hash(rerun_prompt)
+            try:
+                text2 = _call_llm(rerun_prompt, deadline=deadline)
+                records2, dropped2 = _resolve_pass(text2, norm_tx, anchors, data, known)
+            except ExtractError as e:
+                cov["coverage_rerun_status"] = "failed"
+                print(f"[extract] 覆盖复跑失败，保留首跑结果: {e}", flush=True)
+            else:
+                cov["coverage_rerun_status"] = "completed"
+                cov["coverage_runs"] = 2
+                records = _merge_runs(aweme_id, records, records2)
+                for d in dropped2:                                  # 二跑丢弃标来源便于排障
+                    d["pass"] = 2
+                dropped = dropped + dropped2
+                cov["coverage_missing"] = sorted(_coverage_missing(anchors, records))
+                cov["prompt_full_hash_rerun"] = prompt_full_rerun
 
     used = sorted([list(t) for t in known])
     extract = {
@@ -464,6 +563,7 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
         "records": records,
         "dropped_count": len(dropped),
         "dropped": dropped,
+        **cov,
     }
     extract["result_rev"] = result_rev(aweme_id, records)
     # 空 records 不再当失败重试（agy M-02/cf5#11）：显式 no_content 终态成功。
@@ -573,6 +673,8 @@ def _classify(r: dict, is_conflict: bool,
     tri = _record_triple(r)
     if known is not None and tri is not None and tri not in known:
         return db.PENDING_NEW_VERSION              # M04 合法三元组但版本未登记 → 首次确认
+    if r.get("single_run"):
+        return db.PENDING                          # plan v4：双跑单边记录一律人工确认，不 auto_ok
     if not _bug_norm(r):
         return db.PENDING                          # 规则6 空 bug_id 一律不 auto_ok
     if _bug_prefix_conflict(r):
