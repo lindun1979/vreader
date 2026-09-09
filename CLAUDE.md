@@ -37,6 +37,9 @@
 - ASR：**Gladia 云转写主**（gold 97 格 100% vs SenseVoice 89.7%，~11s/条，带 models.yml
   热词；GLADIA_API_KEY 配 .env，免费 10h/月），失败自动回落本地 SenseVoiceSmall（CPU）。
   SenseVoice 长视频**必须分块**转写（整段喂入峰值 10GB+ 拖垮 16G 机）。
+  （评估过的等价替代：Gemini `gemini-3.5-transcribe-live` 并发流式，gold 92.4%≈Gladia 91.8%、
+  无 RPM/RPD 限、~4.5x 实时；工具 `ops/live_transcribe.py`，**未接入主管线**、生产 wss 需代理；
+  详见 `docs/asr-gemini-transcribe-vs-gladia-eval.md`。当前生产仍 Gladia。）
 - 存储：SQLite（tasks / notification_outbox / record_decisions），WAL、每线程独立连接。
 
 ## 关键不变量（勿破坏）
