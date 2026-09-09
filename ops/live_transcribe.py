@@ -143,7 +143,8 @@ def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description="Gemini Live 并发转写 + 接缝去重")
     ap.add_argument("audio", help="音频/视频文件（ffmpeg 可读）")
     ap.add_argument("--out", help="输出文本文件（缺省打印到 stdout）")
-    ap.add_argument("--concurrency", type=int, default=5, help="并发段数（默认 5；5×1x≈9.6K<20K TPM）")
+    ap.add_argument("--concurrency", type=int, default=5,
+                    help="并发段数（默认 5=最优；音频~55tok/s，~6 路即顶满 20K TPM，7+ 必撞 1011，别贪高）")
     ap.add_argument("--overlap", type=float, default=10.0, help="段间重叠秒数（默认 10）")
     ap.add_argument("--model", default=_MODEL)
     a = ap.parse_args(argv)
