@@ -58,6 +58,9 @@ Kimi:
 Hunyuan:
   format: "Hunyuan {v}"
   aliases: [hunyuan, hy, 混元]
+  variants:
+    Preview:
+      aliases: [preview, 预览版, proveil]
   seed_versions: ["3.0"]
 
 MiMo:

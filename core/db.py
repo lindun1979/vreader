@@ -95,6 +95,26 @@ CREATE TABLE IF NOT EXISTS known_versions (
   created_at  REAL NOT NULL,
   PRIMARY KEY (series, version, variant)
 );
+
+-- 校正操作 journal（V-M16）：记录「改名+登记+确认」的持久操作，供崩溃恢复（CAS）。
+-- status: committed（DB 已提交、文件待写/待校验） | done（文件已落） | needs_review（人工介入）。
+CREATE TABLE IF NOT EXISTS correction_operations (
+  op_id                 TEXT PRIMARY KEY,
+  aweme_id              TEXT NOT NULL,
+  old_rid               TEXT NOT NULL,
+  new_rid               TEXT NOT NULL,
+  target_extract_json   TEXT NOT NULL,
+  source_extract_sha256 TEXT NOT NULL,
+  target_extract_sha256 TEXT NOT NULL,
+  status                TEXT NOT NULL,
+  last_error            TEXT,
+  created_at            REAL NOT NULL,
+  resolved_at           REAL
+);
+CREATE INDEX IF NOT EXISTS idx_corrop_status ON correction_operations(status);
+-- 每视频至多一条未完成（committed）op：正常路径必须前一条 done 才建下一条。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_one_committed_corrop_per_aweme
+  ON correction_operations(aweme_id) WHERE status='committed';
 """
 
 
@@ -104,6 +124,16 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
+    return conn
+
+
+def connect_ro(db_path: str | Path) -> sqlite3.Connection:
+    """严格只读连接：mode=ro + query_only=ON，**不写 journal_mode、不建表、不 init**。
+    供进程外只读查询（如 --list-corrections）在 serve 运行时安全打开库，规避
+    learnings sqlite-wal-external-writable-connection（外部可写连接 checkpoint+unlink -wal）。"""
+    conn = sqlite3.connect(f"file:{Path(db_path)}?mode=ro", uri=True, timeout=5.0)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA query_only=ON")
     return conn
 
 
@@ -406,6 +436,69 @@ def board_visible_ids(conn: sqlite3.Connection) -> set[str]:
     rows = conn.execute("SELECT record_id FROM record_decisions WHERE decision IN (?,?)",
                         BOARD_VISIBLE).fetchall()
     return {r["record_id"] for r in rows}
+
+
+# ---------- 校正操作 journal（V-M16）----------
+CORR_COMMITTED = "committed"
+CORR_DONE = "done"
+CORR_NEEDS_REVIEW = "needs_review"
+
+
+def insert_correction_op(conn: sqlite3.Connection, *, op_id: str, aweme_id: str,
+                         old_rid: str, new_rid: str, target_extract_json: str,
+                         source_sha: str, target_sha: str,
+                         commit: bool = False) -> None:
+    """写 committed journal 行（只收调用方 conn，commit=False 惯例，对齐 register_known_version）。
+    部分唯一索引 idx_one_committed_corrop_per_aweme 保证每视频至多一条 committed。"""
+    conn.execute(
+        "INSERT INTO correction_operations(op_id, aweme_id, old_rid, new_rid,"
+        " target_extract_json, source_extract_sha256, target_extract_sha256,"
+        " status, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        (op_id, aweme_id, old_rid, new_rid, target_extract_json, source_sha, target_sha,
+         CORR_COMMITTED, time.time()))
+    if commit:
+        conn.commit()
+
+
+def unfinished_op_for(conn: sqlite3.Connection, aweme_id: str) -> sqlite3.Row | None:
+    """返回该视频未完成（committed 或 needs_review）的 op 行，或 None。"""
+    return conn.execute(
+        "SELECT * FROM correction_operations WHERE aweme_id=? AND status IN (?,?)"
+        " ORDER BY created_at, op_id LIMIT 1",
+        (aweme_id, CORR_COMMITTED, CORR_NEEDS_REVIEW)).fetchone()
+
+
+def list_committed_ops(conn: sqlite3.Connection, aweme_id: str | None = None) -> list[sqlite3.Row]:
+    """按 (created_at, op_id) 升序列出 committed 行；aweme_id=None 为全量（启动恢复用）。"""
+    if aweme_id is None:
+        return conn.execute(
+            "SELECT * FROM correction_operations WHERE status=? ORDER BY created_at, op_id",
+            (CORR_COMMITTED,)).fetchall()
+    return conn.execute(
+        "SELECT * FROM correction_operations WHERE status=? AND aweme_id=? ORDER BY created_at, op_id",
+        (CORR_COMMITTED, aweme_id)).fetchall()
+
+
+def get_correction_op(conn: sqlite3.Connection, op_id: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM correction_operations WHERE op_id=?", (op_id,)).fetchone()
+
+
+def mark_op_status(conn: sqlite3.Connection, op_id: str, status: str, *,
+                   last_error: str | None = None, resolved_at: float | None = None,
+                   commit: bool = False) -> None:
+    conn.execute(
+        "UPDATE correction_operations SET status=?, last_error=?, resolved_at=? WHERE op_id=?",
+        (status, last_error, resolved_at, op_id))
+    if commit:
+        conn.commit()
+
+
+def list_all_corrections(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """列全部 op（供 --list-corrections 只读展示），按 created_at 升序。"""
+    return conn.execute(
+        "SELECT op_id, aweme_id, old_rid, new_rid, status, last_error, created_at, resolved_at"
+        " FROM correction_operations ORDER BY created_at, op_id").fetchall()
 
 
 # ---------- rid 迁移（C9/V-M15：身份键改造的生产兼容收尾）----------

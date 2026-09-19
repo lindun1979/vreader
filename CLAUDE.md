@@ -67,9 +67,17 @@ reprocess/迁移等 CLI 写操作需 flock，**必须先 `launchctl unload` 停 
 launchd 管理（禁 nohup），登记运维斯 SERVICES.md。
 
 ## 测试
-`pytest -q`（177 项全绿，**只在研发机跑**；生产机不跑 pytest）。手动处理：
+`pytest -q`（231 项全绿，**只在研发机跑**；生产机不跑 pytest）。手动处理：
 `python -m core.cli "<链接>"`；重跑提取：`--reprocess <id>`；强制用 Gladia 重转（修此前落
 兜底 ASR 的数据，删 transcript 走全量管线）：`--retranscribe <id>`。
+校正命令（V-M16，见 `docs/plans/vreader-confirm-correction-command-plan-v8.md`）：
+`vr确认 <video_id> <记录码>@<result_rev>=<系列>/<版本>[/<变体>]` —— 对 pending/pending_unknown/
+pending_new_version 记录人工指定三元组，一步「改 extract 四字段 → 登记 known_version →
+决策 APPROVED → 上榜」。改名会改 rid，双存储（文件/DB）非原子，用 `correction_operations`
+journal + source/target sha CAS 恢复（serve 启动 + 命令入口各恢复一次；命令内限当前视频）。
+停机期被 reprocess 改写 → 恢复转 `needs_review`，人工 CLI 解决：`--list-corrections`（只读
+`db.connect_ro`）查看，`--resolve-correction <op_id> <keep-file|apply-journal>`（停 serve、取
+flock）二选一。`keep-file` 保留全局版本登记、仅回退产物。含空格系列名（Claude Opus 等）不支持，走手改。
 真值集：`tests/gold/token_bug/gold.json`（用户人工标注 7 视频得分 + aweme_id 映射，进仓）；
 准确率评测（只读，隔离副本）：`python ops/eval_gold.py <data副本> --min-extract 96`
 （比较键 aweme_id×canonical×bug_id，缺格/多报/重复/冲突全计错，双口径 + 逐格 diff）。

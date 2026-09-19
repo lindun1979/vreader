@@ -5,12 +5,15 @@
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import time
+import uuid
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
@@ -759,3 +762,205 @@ def detail_view(conn, aweme_id: str) -> str:
                          + (f" · 归一：{tri}" if tri else " · 归一：未能锚定"))
         lines.append(f"    证据：{r.get('evidence_quote', '')}")
     return "\n".join(lines)
+
+
+# ---------- 校正命令：改名 + 登记 + 确认（V-M16）----------
+
+def _transcript_text(aweme_id: str) -> str | None:
+    tp = config.video_dir("token_bug", aweme_id) / "transcript.txt"
+    try:
+        return tp.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def resume_pending_corrections(conn, aweme_id: str | None = None) -> bool:
+    """恢复未完成校正（CAS，不覆盖停机期被 reprocess 改写的新产物）。
+    命令路径传 aweme_id 限当前视频；serve 启动传 None 全量。返回是否**补写过**任何产物
+    （供调用方决定是否重渲染 board）。"""
+    from . import util
+    wrote = False
+    for op in db.list_committed_ops(conn, aweme_id):
+        p = _paths_extract(op["aweme_id"])
+        cur_bytes = None
+        if p is not None:
+            try:
+                cur_bytes = Path(p).read_bytes()
+            except OSError:
+                cur_bytes = None
+        cur_sha = hashlib.sha256(cur_bytes).hexdigest() if cur_bytes is not None else None
+        if cur_sha == op["target_extract_sha256"]:
+            db.mark_op_status(conn, op["op_id"], db.CORR_DONE,
+                              resolved_at=time.time(), commit=True)          # 已写过，幂等收尾
+        elif cur_sha == op["source_extract_sha256"] and p is not None:
+            util.atomic_write_text(p, op["target_extract_json"])            # 补写目标
+            db.mark_op_status(conn, op["op_id"], db.CORR_DONE,
+                              resolved_at=time.time(), commit=True)
+            wrote = True
+        else:
+            db.mark_op_status(conn, op["op_id"], db.CORR_NEEDS_REVIEW,
+                              last_error="盘上 extract 与 source/target 均不符（疑似停机期被 "
+                              "reprocess 改写），需人工 --resolve-correction", commit=True)
+    return wrote
+
+
+def correct_and_confirm(conn, aweme_id: str, correction, approver: str) -> tuple[bool, str]:
+    """校正某待确认记录的模型三元组并确认上榜（一步：改 extract 四字段 → 登记 known_version →
+    决策=APPROVED → 落盘），崩溃可自愈（correction_operations journal + CAS 恢复）。
+    `correction` 为 routing.Correction（rid/result_rev/series/version/variant）。
+    调用方（handle_confirm）须已持 publish_lock、并已校验 result_rev。"""
+    from . import util
+    # 1. 先恢复本视频未完成 op；仍未完成（committed/needs_review）→ 阻断新校正
+    resume_pending_corrections(conn, aweme_id)
+    op = db.unfinished_op_for(conn, aweme_id)
+    if op is not None:
+        return False, (f"该视频有未完成校正（op {op['op_id'][:8]}，状态 {op['status']}）"
+                       f"{'：' + op['last_error'] if op['last_error'] else ''}\n"
+                       f"请停 serve 后执行：python -m core.cli --resolve-correction "
+                       f"{op['op_id']} <keep-file|apply-journal>")
+    # 2. 纯读 + 计算（零副作用）
+    p = _paths_extract(aweme_id)
+    if p is None:
+        return False, f"找不到该视频的提取结果（{aweme_id}）。"
+    try:
+        source_bytes = Path(p).read_bytes()
+    except OSError as e:
+        return False, f"读取产物失败：{e}"
+    source_sha = hashlib.sha256(source_bytes).hexdigest()
+    try:
+        ex = json.loads(source_bytes.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        return False, f"产物 JSON 解析失败：{e}"
+    by_rid, _ = _dedup_records(aweme_id, ex.get("records", []))
+    matches = [x for x in by_rid if x == correction.rid or x.startswith(correction.rid)]
+    if not matches:
+        return False, f"没有匹配 {correction.rid} 的记录（明细可能已更新，请重看 vr明细 {aweme_id}）。"
+    if len(matches) > 1:
+        return False, f"{correction.rid} 前缀不唯一，请多给几位。"
+    old_rid = matches[0]
+    # 归一三元组（人工即权威，不锚定）
+    try:
+        canonical, series, stored_version, variant = models_mod.normalize_triple(
+            correction.series, correction.version, correction.variant)
+    except models_mod.ConfigError as e:
+        return False, f"模型名无法归一：{e}"
+    # 状态门禁
+    d = db.get_decision(conn, old_rid)
+    if d is None or d["decision"] not in (db.PENDING, db.PENDING_UNKNOWN, db.PENDING_NEW_VERSION):
+        cur = d["decision"] if d else "无决策"
+        if cur == db.PENDING_CONFLICT:
+            return False, (f"该记录是矛盾组（{cur}），请用 vr确认 {aweme_id} <记录码> 逐条裁决，"
+                           f"不走校正。")
+        return False, (f"该记录当前状态为 {cur}，不可校正"
+                       f"（仅 pending/pending_unknown/pending_new_version 可校正）。")
+    # 3. 构造 corrected_ex：改所有等于 old_rid 的记录（dedup 组），保留 raw/得分/证据
+    corrected_ex = copy.deepcopy(ex)
+    recs = corrected_ex.get("records", [])
+    idxs = [i for i, r in enumerate(recs) if _record_id(aweme_id, r) == old_rid]
+    if not idxs:
+        return False, "内部错误：未定位到待改记录。"
+    for i in idxs:
+        r = recs[i]
+        r["model_series"], r["model_version"] = series, stored_version
+        r["model_variant"], r["model_canonical"] = variant, canonical
+    new_rid = _record_id(aweme_id, recs[idxs[0]])
+    corrected_ex["result_rev"] = result_rev(aweme_id, recs)
+    # 决策溯源快照（仅 v2 产物；known_versions_used/snapshot 不改）
+    known_before = db.list_known_versions(conn)
+    known_after = known_before | {(series, stored_version, variant)}
+    if corrected_ex.get("schema_rev") == SCHEMA_REV:
+        corrected_ex["known_versions_used_at_decision"] = sorted([list(t) for t in known_after])
+        corrected_ex["decided_at"] = time.time()
+    # 校验前置（有 transcript 则传，含 evidence 子串校验）
+    try:
+        validate_extract(corrected_ex, transcript=_transcript_text(aweme_id),
+                         expected_video_id=aweme_id)
+    except ExtractError as e:
+        return False, f"校正后产物校验失败：{e}"
+    # 精确字节（步骤 6 写入同一串，保证下次恢复 CAS 命中 target_sha）
+    target_json = json.dumps(corrected_ex, ensure_ascii=False, indent=2)
+    target_sha = hashlib.sha256(target_json.encode("utf-8")).hexdigest()
+    # 4. 碰撞检查（仅 rid 变化时）
+    if new_rid != old_rid and db.get_decision(conn, new_rid) is not None:
+        return False, (f"校正后记录码 {new_rid[:8]} 与本视频已有记录冲突，拒绝"
+                       f"（避免误合并/误带确认）。")
+    # 5. 自控单事务
+    op_id = uuid.uuid4().hex
+    now = time.time()
+    ev, ph = corrected_ex.get("extractor_version", ""), corrected_ex.get("prompt_hash", "")
+    try:
+        db.register_known_version(conn, series, stored_version, variant, approver, commit=False)
+        if new_rid == old_rid:
+            cur = conn.execute(
+                "UPDATE record_decisions SET decision=?, approved_by=?, approved_at=?"
+                " WHERE record_id=? AND aweme_id=?",
+                (db.APPROVED, approver, now, old_rid, aweme_id))
+            if cur.rowcount != 1:
+                conn.rollback()
+                return False, "内部错误：决策行更新未命中，已回滚。"
+        else:
+            cur = conn.execute(
+                "UPDATE record_decisions SET decision=? WHERE record_id=? AND aweme_id=?",
+                (db.STALE, old_rid, aweme_id))
+            if cur.rowcount != 1:
+                conn.rollback()
+                return False, "内部错误：旧决策行更新未命中，已回滚。"
+            conn.execute(
+                "INSERT INTO record_decisions(record_id, aweme_id, decision, extractor_version,"
+                " prompt_hash, approved_by, approved_at, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                (new_rid, aweme_id, db.APPROVED, ev, ph, approver, now, now))
+        db.insert_correction_op(conn, op_id=op_id, aweme_id=aweme_id, old_rid=old_rid,
+                                new_rid=new_rid, target_extract_json=target_json,
+                                source_sha=source_sha, target_sha=target_sha, commit=False)
+        conn.commit()
+    except sqlite3.IntegrityError as e:
+        conn.rollback()
+        return False, f"并发/唯一约束冲突，已回滚：{e}"
+    except Exception:
+        conn.rollback()
+        raise
+    # 6. 文件最后落（写同一 target_json）
+    try:
+        util.atomic_write_text(p, target_json)
+    except OSError:
+        return False, ("版本已登记、决策已更新，产物写入待恢复；重发本命令或重启服务将自动补齐。")
+    db.mark_op_status(conn, op_id, db.CORR_DONE, resolved_at=time.time(), commit=True)
+    vtxt = f" {variant}" if variant else ""
+    return True, (f"已校正 [{old_rid[:8]}]→[{new_rid[:8]}]：{canonical}"
+                  f"（{series} {stored_version}{vtxt}），已登记版本并确认上榜。")
+
+
+def resolve_correction(conn, op_id: str, mode: str) -> tuple[bool, str]:
+    """人工解决 needs_review 校正 op（CLI，须停 serve、持 DataDirLock）。
+    keep-file：以当前盘上产物为准重判决策（保留已登记的全局版本）；
+    apply-journal：落盘本次校正目标产物。两者置 done 前均重渲染 board。"""
+    from . import util, pipeline
+    op = db.get_correction_op(conn, op_id)
+    if op is None:
+        return False, f"op 不存在：{op_id}"
+    if op["status"] != db.CORR_NEEDS_REVIEW:
+        return False, f"op {op_id} 状态为 {op['status']}，仅 needs_review 可解（拒绝覆盖历史 op）。"
+    aweme_id = op["aweme_id"]
+    p = _paths_extract(aweme_id)
+    if mode == "keep-file":
+        if p is None:
+            return False, "找不到当前产物文件。"
+        try:
+            ex = json.loads(Path(p).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            return False, f"读取当前产物失败：{e}"
+        apply_decisions(conn, aweme_id, ex, known=db.list_known_versions(conn))
+        pipeline.render_board(conn)
+        db.mark_op_status(conn, op_id, db.CORR_DONE, resolved_at=time.time(), commit=True)
+        return True, (f"已按当前盘上产物重判决策（保留全局版本登记、仅回退产物），"
+                      f"op {op_id[:8]} → done。")
+    if mode == "apply-journal":
+        dest = p or str(config.video_dir("token_bug", aweme_id) / "extract.json")
+        try:
+            util.atomic_write_text(dest, op["target_extract_json"])
+        except OSError as e:
+            return False, f"落盘失败：{e}"
+        pipeline.render_board(conn)
+        db.mark_op_status(conn, op_id, db.CORR_DONE, resolved_at=time.time(), commit=True)
+        return True, f"已落盘本次校正目标产物，op {op_id[:8]} → done。"
+    return False, "mode 必须是 keep-file 或 apply-journal。"

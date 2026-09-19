@@ -78,3 +78,31 @@ def test_variant_collides_with_other_series_base_rejected():
     }
     with pytest.raises(models.ConfigError):
         models.compose_canonical("A", "2", "Pro", data=data)
+
+
+# ---------- V-M16 normalize_triple（校正命令共用的公开归一 API）----------
+
+def test_normalize_triple_preview_variant():
+    assert models.normalize_triple("Hunyuan", "4.0", "Preview") == (
+        "Hunyuan 4.0 Preview", "Hunyuan", "4.0", "Preview")
+
+
+def test_normalize_triple_deepseek_flash():
+    assert models.normalize_triple("DeepSeek", "4.1", "Flash") == (
+        "DeepSeek V4.1 Flash", "DeepSeek", "4.1", "Flash")
+
+
+def test_normalize_triple_version_map_opus():
+    # Opus 5.0 → stored "5"（version_map），canonical "Claude Opus 5"
+    canonical, series, sv, variant = models.normalize_triple("Claude Opus", "5.0", "")
+    assert (canonical, sv) == ("Claude Opus 5", "5")
+
+
+def test_normalize_triple_bad_series_raises():
+    with pytest.raises(models.ConfigError):
+        models.normalize_triple("NoSuchSeries", "1", "")
+
+
+def test_normalize_triple_bad_variant_raises():
+    with pytest.raises(models.ConfigError):
+        models.normalize_triple("DeepSeek", "4.1", "Nope")

@@ -8,6 +8,21 @@
 from __future__ import annotations
 
 import re
+from typing import NamedTuple
+
+
+class Correction(NamedTuple):
+    """`vr确认 <vid> <rid>@<result_rev>=<系列>/<版本>[/<变体>]` 的解析结果。"""
+    rid: str
+    result_rev: str
+    series: str
+    version: str
+    variant: str
+
+
+# 校正 token：记录码@结果版本=系列/版本[/变体]（@result_rev 强制；整体无空格，走单 arg 槽）
+_CORRECTION = re.compile(
+    r"^([0-9A-Za-z]{6,})@([0-9a-f]{6,})=([^/]+)/([^/]+)(?:/([^/]+))?$")
 
 _DOUYIN_URL = re.compile(r"(v\.douyin\.com/|douyin\.com/(?:video|note)/|iesdouyin\.com/)")
 # vr 与命令词之间允许可选空格（用户常写「vr 帮助」；vr帮助 / vr 帮助 都认）
@@ -44,3 +59,13 @@ def parse_confirm(text: str) -> tuple[str, str | None]:
 def parse_detail(text: str) -> str:
     m = _DETAIL.match(text or "")
     return m.group(1) if m else ""
+
+
+def parse_correction(arg: str) -> Correction | None:
+    """把 confirm 的 arg（`rid@rev=系列/版本[/变体]`）解析为 Correction；不匹配 → None。
+    variant 缺省为 ''。含 '=' 是「这是校正」的判定信号（由调用方先判）。"""
+    m = _CORRECTION.match(arg or "")
+    if not m:
+        return None
+    return Correction(rid=m.group(1), result_rev=m.group(2), series=m.group(3),
+                      version=m.group(4), variant=m.group(5) or "")

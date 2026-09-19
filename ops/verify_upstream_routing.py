@@ -28,6 +28,8 @@ CASES = [
     ("vr确认 7681587976547208511", "/confirm"),
     ("vr确认 7681587976547208511 a1b2c3d4", "/confirm"),      # 逐条冲突记录码
     ("vr 确认 7681587976547208511 rev:abc123", "/confirm"),   # 绑版本 + 空格
+    ("vr确认 7686431173098163465 11af8cf@f5834f5=DeepSeek/4.1/Flash", "/confirm"),  # 校正单 token
+
     ("vr榜单", "/board"),
     ("vr 榜单", "/board"),
     ("看看 https://v.douyin.com/abc123/ 复制打开抖音", "/ingest"),

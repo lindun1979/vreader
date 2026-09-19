@@ -29,12 +29,37 @@ def _print_board() -> int:
     return 0
 
 
+def _list_corrections() -> int:
+    """--list-corrections 纯读：列校正 op（含 needs_review），走严格只读连接、不 init、不取写锁。"""
+    dbp = config.DATA_DIR / "vreader.db"
+    if not dbp.exists():
+        print("（暂无校正记录）")
+        return 0
+    conn = db.connect_ro(str(dbp))
+    try:
+        rows = db.list_all_corrections(conn)
+    finally:
+        conn.close()
+    if not rows:
+        print("（暂无校正记录）")
+        return 0
+    for r in rows:
+        line = (f"[{r['op_id'][:8]}] {r['status']} · aweme={r['aweme_id']} · "
+                f"{r['old_rid'][:8]}→{r['new_rid'][:8]}")
+        if r["last_error"]:
+            line += f" · {r['last_error']}"
+        print(line)
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if not argv:
         print(__doc__)
         return 1
     if argv[0] == "--board":
         return _print_board()
+    if argv[0] == "--list-corrections":
+        return _list_corrections()
     # 写路径（处理/重跑）取数据目录 flock，与 serve 及其他 CLI 写实例互斥
     dirlock = lock.DataDirLock(config.DATA_DIR)
     if not dirlock.acquire(blocking=False):
@@ -52,6 +77,14 @@ def main(argv: list[str]) -> int:
                 return 1
             print(pipeline.reprocess(conn, argv[1]))
             return 0
+        if argv[0] == "--resolve-correction":
+            if len(argv) < 3 or argv[2] not in ("keep-file", "apply-journal"):
+                print("用法：--resolve-correction <op_id> <keep-file|apply-journal>", file=sys.stderr)
+                return 1
+            from . import extract as ex_mod
+            ok, msg = ex_mod.resolve_correction(conn, argv[1], argv[2])
+            print(msg)
+            return 0 if ok else 2
         if argv[0] == "--retranscribe":
             if len(argv) < 2:
                 print("用法：--retranscribe <aweme_id>", file=sys.stderr)

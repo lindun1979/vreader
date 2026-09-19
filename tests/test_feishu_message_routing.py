@@ -68,3 +68,30 @@ def test_plain_chat_not_forwarded():
 def test_board_word_in_sentence_not_matched():
     # "榜单" 出现在闲聊里不应误触发（需精确命令词）
     assert routing.classify("这个榜单看起来不错啊") is None
+
+
+# ---------- V-M16 校正 token 解析 ----------
+
+def test_correction_classifies_as_confirm():
+    t = "vr确认 7686431173098163465 11af8cf@f5834f5=DeepSeek/4.1/Flash"
+    assert routing.classify(t) == "confirm"
+
+
+def test_parse_correction_full():
+    c = routing.parse_correction("11af8cf@f5834f5=DeepSeek/4.1/Flash")
+    assert c == routing.Correction("11af8cf", "f5834f5", "DeepSeek", "4.1", "Flash")
+
+
+def test_parse_correction_no_variant():
+    c = routing.parse_correction("765cdc5@abc123=Hunyuan/4.0")
+    assert c is not None and c.variant == "" and c.series == "Hunyuan" and c.version == "4.0"
+
+
+def test_parse_correction_requires_result_rev():
+    # 缺 @result_rev → 不匹配（返回 None，走语法提示）
+    assert routing.parse_correction("11af8cf=DeepSeek/4.1/Flash") is None
+
+
+def test_parse_correction_rejects_non_correction_arg():
+    assert routing.parse_correction("a1b2c3d4") is None
+    assert routing.parse_correction("rev:deadbeef") is None

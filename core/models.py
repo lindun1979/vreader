@@ -398,3 +398,15 @@ def resolve_record(model_raw: str, model_series: str, model_version: str,
         return UNK
     stored_version = _apply_version_map(series, norm_version(version), data)
     return canonical, series, stored_version, variant
+
+
+def normalize_triple(series: str, version: str, variant: str = "",
+                     *, data: dict | None = None) -> tuple[str, str, str, str]:
+    """人工指定的 (series, version, variant) → (canonical, series, stored_version, variant)。
+    **不做锚定**（人工即权威），只做 compose_canonical（round-trip 撞名校验）+ version_map 归一，
+    与 resolve_record 末尾同款；stored_version 与 known_versions 三元组一致。供校正命令/登记/测试共用。
+    非法系列/变体/空版本/撞名 → 抛 ConfigError（由调用方转用户可见回执）。"""
+    data = data if data is not None else load_series()
+    canonical = compose_canonical(series, version, variant, data=data)  # 校验 + round-trip
+    stored_version = _apply_version_map(series, norm_version(version), data)
+    return canonical, series, stored_version, (variant or "")

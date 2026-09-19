@@ -157,6 +157,20 @@ def handle_confirm(conn, payload: dict) -> tuple[int, str]:
     if not video_id:
         return 200, "用法：vr确认 <video_id> [<记录码>|rev:<版本>]"
     with lock.publish_lock:  # C8 publish_confirm：批准与渲染对 worker 原子（锁内一致快照）
+        # 校正 + 确认（arg 含 '='：<记录码>@<result_rev>=<系列>/<版本>[/<变体>]）
+        if arg and "=" in arg:
+            corr = routing.parse_correction(arg)
+            if corr is None:
+                return 200, ("校正语法：vr确认 <video_id> <记录码>@<result_rev>=<系列>/<版本>[/<变体>]"
+                             "\n（@result_rev 必填，记录码与 result_rev 均取自 vr明细）")
+            cur = _current_result_rev(video_id)
+            if cur and corr.result_rev != cur:
+                return 200, (f"内容已更新（当前版本 {cur}，你给的是 {corr.result_rev}）。"
+                             f"请先 vr明细 {video_id} 重新查看再校正。")
+            ok, msg = ex_mod.correct_and_confirm(conn, video_id, corr, sender_id)
+            if ok:
+                pipeline.render_board(conn)
+            return 200, msg
         # 逐条确认冲突组成员（arg 为 rid 短码）
         if arg and not arg.startswith("rev:"):
             ok, msg = ex_mod.confirm_conflict_member(conn, video_id, arg, sender_id)
@@ -190,6 +204,8 @@ _HELP_TEXT = (
     "· vr确认 <video_id> —— 批量确认普通/新版本待确认记录入榜（新版本首次确认即登记）\n"
     "· vr确认 <video_id> <记录码> —— 逐条确认矛盾记录\n"
     "· vr确认 <video_id> rev:<版本> —— 绑版本确认（防确认过时内容）\n"
+    "· vr确认 <video_id> <记录码>@<result_rev>=<系列>/<版本>[/<变体>] —— 校正模型名并确认"
+    "（救未知/糊错版本；首次即登记该版本；记录码+result_rev 取自 vr明细）\n"
     "· vr帮助 —— 显示本说明")
 
 
@@ -449,6 +465,16 @@ def serve() -> None:
         swept = pipeline.sweep_orphan_media(conn)  # 启动孤儿媒体清扫（C4）
         if swept:
             print(f"vreader startup: swept {swept} orphan media files")
+        # 校正 journal 恢复（V-M16）：worker/HTTP 线程起来前，补齐「commit 成功但文件未写」窗口
+        from . import extract as _ex
+        if _ex.resume_pending_corrections(conn, None):
+            pipeline.render_board(conn)
+            print("vreader startup: resumed pending correction(s), board re-rendered")
+        for _op in db.list_all_corrections(conn):
+            if _op["status"] == db.CORR_NEEDS_REVIEW:
+                print(f"vreader startup: correction op {_op['op_id']} NEEDS_REVIEW "
+                      f"(aweme={_op['aweme_id']}): {_op['last_error']} → "
+                      f"python -m core.cli --resolve-correction {_op['op_id']} <keep-file|apply-journal>")
     finally:
         conn.close()
     stop = threading.Event()
