@@ -161,12 +161,13 @@ def handle_confirm(conn, payload: dict) -> tuple[int, str]:
         if arg and "=" in arg:
             corr = routing.parse_correction(arg)
             if corr is None:
-                return 200, ("校正语法：vr确认 <video_id> <记录码>@<result_rev>=<系列>/<版本>[/<变体>]"
-                             "\n（@result_rev 必填，记录码与 result_rev 均取自 vr明细）")
-            cur = _current_result_rev(video_id)
-            if cur and corr.result_rev != cur:
-                return 200, (f"内容已更新（当前版本 {cur}，你给的是 {corr.result_rev}）。"
-                             f"请先 vr明细 {video_id} 重新查看再校正。")
+                return 200, ("校正语法：vr确认 <video_id> <记录码>[@<result_rev>]=<系列>/<版本>[/<变体>]"
+                             "\n（记录码取自 vr明细；@result_rev 可选，带上可防校正到已更新的明细）")
+            if corr.result_rev:  # 仅在带 @rev 时校验（可选防陈旧明细）
+                cur = _current_result_rev(video_id)
+                if cur and corr.result_rev != cur:
+                    return 200, (f"内容已更新（当前版本 {cur}，你给的是 {corr.result_rev}）。"
+                                 f"请先 vr明细 {video_id} 重新查看再校正。")
             ok, msg = ex_mod.correct_and_confirm(conn, video_id, corr, sender_id)
             if ok:
                 pipeline.render_board(conn)
@@ -204,8 +205,8 @@ _HELP_TEXT = (
     "· vr确认 <video_id> —— 批量确认普通/新版本待确认记录入榜（新版本首次确认即登记）\n"
     "· vr确认 <video_id> <记录码> —— 逐条确认矛盾记录\n"
     "· vr确认 <video_id> rev:<版本> —— 绑版本确认（防确认过时内容）\n"
-    "· vr确认 <video_id> <记录码>@<result_rev>=<系列>/<版本>[/<变体>] —— 校正模型名并确认"
-    "（救未知/糊错版本；首次即登记该版本；记录码+result_rev 取自 vr明细）\n"
+    "· vr确认 <video_id> <记录码>[@<result_rev>]=<系列>/<版本>[/<变体>] —— 校正模型名并确认"
+    "（救未知/糊错版本；首次即登记该版本；记录码取自 vr明细；@result_rev 可选防陈旧）\n"
     "· vr帮助 —— 显示本说明")
 
 

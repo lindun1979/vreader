@@ -20,9 +20,10 @@ class Correction(NamedTuple):
     variant: str
 
 
-# 校正 token：记录码@结果版本=系列/版本[/变体]（@result_rev 强制；整体无空格，走单 arg 槽）
+# 校正 token：记录码[@结果版本]=系列/版本[/变体]（@result_rev 可选；带则校验防陈旧明细；
+# 整体无空格，走单 arg 槽）
 _CORRECTION = re.compile(
-    r"^([0-9A-Za-z]{6,})@([0-9a-f]{6,})=([^/]+)/([^/]+)(?:/([^/]+))?$")
+    r"^([0-9A-Za-z]{6,})(?:@([0-9a-f]{6,}))?=([^/]+)/([^/]+)(?:/([^/]+))?$")
 
 _DOUYIN_URL = re.compile(r"(v\.douyin\.com/|douyin\.com/(?:video|note)/|iesdouyin\.com/)")
 # vr 与命令词之间允许可选空格（用户常写「vr 帮助」；vr帮助 / vr 帮助 都认）
@@ -67,5 +68,5 @@ def parse_correction(arg: str) -> Correction | None:
     m = _CORRECTION.match(arg or "")
     if not m:
         return None
-    return Correction(rid=m.group(1), result_rev=m.group(2), series=m.group(3),
+    return Correction(rid=m.group(1), result_rev=m.group(2) or "", series=m.group(3),
                       version=m.group(4), variant=m.group(5) or "")

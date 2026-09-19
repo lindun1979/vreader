@@ -381,9 +381,24 @@ def test_handle_confirm_stale_result_rev_rejected(conn, data_dir, monkeypatch):
     assert db.get_decision(conn, old_rid)["decision"] == db.PENDING_UNKNOWN
 
 
-def test_handle_confirm_missing_rev_syntax(conn, data_dir, monkeypatch):
+def test_handle_confirm_correction_no_rev_ok(conn, data_dir, monkeypatch):
+    """@result_rev 可选：不带 rev 也能校正（去 ping-pong）。"""
     from core import config, service
     monkeypatch.setattr(config, "ADMIN_SENDER_ID", "ADMIN")
-    # arg 含 = 但缺 @rev → 语法提示
-    code, body = service.handle_confirm(conn, _admin("vr确认 vx abcdef=DeepSeek/4.1/Flash"))
+    aid = "vnorev"
+    ex = _v2ex(aid, [_rec("UNKNOWN", "", "", "")])
+    _write(aid, ex)
+    ex_mod.apply_decisions(conn, aid, ex, known=db.list_known_versions(conn))
+    old_rid = ex_mod.record_id(aid, ex["records"][0])
+    code, body = service.handle_confirm(
+        conn, _admin(f"vr确认 {aid} {old_rid[:8]}=DeepSeek/4.1/Flash"))
+    assert code == 200 and "已校正" in body
+    assert ("DeepSeek", "4.1", "Flash") in db.list_known_versions(conn)
+
+
+def test_handle_confirm_malformed_correction_syntax(conn, data_dir, monkeypatch):
+    from core import config, service
+    monkeypatch.setattr(config, "ADMIN_SENDER_ID", "ADMIN")
+    # 含 = 但无系列/版本斜杠结构 → 语法提示
+    code, body = service.handle_confirm(conn, _admin("vr确认 vx abcdef=DeepSeekFlash"))
     assert code == 200 and "校正语法" in body

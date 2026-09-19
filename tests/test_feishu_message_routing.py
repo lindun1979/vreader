@@ -87,11 +87,14 @@ def test_parse_correction_no_variant():
     assert c is not None and c.variant == "" and c.series == "Hunyuan" and c.version == "4.0"
 
 
-def test_parse_correction_requires_result_rev():
-    # 缺 @result_rev → 不匹配（返回 None，走语法提示）
-    assert routing.parse_correction("11af8cf=DeepSeek/4.1/Flash") is None
+def test_parse_correction_result_rev_optional():
+    # @result_rev 可选：不带则 result_rev="" （仍解析，直接改）
+    c = routing.parse_correction("11af8cf=DeepSeek/4.1/Flash")
+    assert c is not None and c.result_rev == "" and c.series == "DeepSeek"
 
 
 def test_parse_correction_rejects_non_correction_arg():
     assert routing.parse_correction("a1b2c3d4") is None
     assert routing.parse_correction("rev:deadbeef") is None
+    # 缺系列/版本斜杠结构 → 非校正
+    assert routing.parse_correction("abcdef@deadbeef=DeepSeekFlash") is None

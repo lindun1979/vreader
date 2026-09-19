@@ -925,9 +925,9 @@ def correct_and_confirm(conn, aweme_id: str, correction, approver: str) -> tuple
     except OSError:
         return False, ("版本已登记、决策已更新，产物写入待恢复；重发本命令或重启服务将自动补齐。")
     db.mark_op_status(conn, op_id, db.CORR_DONE, resolved_at=time.time(), commit=True)
-    vtxt = f" {variant}" if variant else ""
+    tri = f"{series}/{stored_version}" + (f"/{variant}" if variant else "")
     return True, (f"已校正 [{old_rid[:8]}]→[{new_rid[:8]}]：{canonical}"
-                  f"（{series} {stored_version}{vtxt}），已登记版本并确认上榜。")
+                  f"（三元组 {tri}），已登记版本并确认上榜。")
 
 
 def resolve_correction(conn, op_id: str, mode: str) -> tuple[bool, str]:
