@@ -73,6 +73,13 @@ def test_known_unique_fallback_bare_name_no_version_in_video():
         ("Doubao Seed 2.1", "Doubao Seed", "2.1", "")
 
 
+def test_known_fallback_refuses_when_raw_has_unanchored_version():
+    # 防御性拦截：raw 明明带版本号（豆包2.3），但系列名被 ASR 糊成「豆报」锚不上 →
+    # 不再静默贴最近已知版本 2.1，而是走待确认（UNKNOWN）。根因：muse spark→muse bug 把 1.3 贴成 1.2。
+    known = _seed_known()
+    assert _resolve("豆包2.3", "", "", "", "豆报2.3 上场解题", known=known)[0] == "UNKNOWN"
+
+
 def test_known_disambiguates_ambiguous_in_video():
     # 本视频锚定歧义（ASR 把「豆包2.1」也糊出个「豆包2」）→ 已知版本破歧到 2.1
     known = _seed_known()

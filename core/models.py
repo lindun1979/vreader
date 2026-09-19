@@ -297,13 +297,16 @@ def _unique_known_variant(known: set | None, series: str, version_raw: str,
 
 
 def _coref(series: str, variant: str, anchors: dict, known: set | None,
-           data: dict) -> tuple[str | None, str, bool]:
+           data: dict, raw_has_version: bool = False) -> tuple[str | None, str, bool]:
     """共指兜底（version 为空）。返回 (version|None, variant, from_known)。
     ① 本视频锚定组合优先：已绑 variant 筛相符者、未绑取全部，唯一→采用。
     ② 本视频歧义（≥2 组合）：用**已知版本集**破歧——恰一个候选组合是已知版本 → 采用
        （版本本身仍是本视频口播的，known 只破平局，不引入未口播的版本）；否则 UNKNOWN。
     ③ 本视频无锚点：退已知版本集——(series[,variant]) 在 known 中唯一 → 采用（博主对单版本
        模型常只说裸名、版本从不口播，如「豆包」=Doubao Seed 2.1）；多个 → UNKNOWN。
+       **防御性拦截**：raw 里本就带了版本号（raw_has_version），只是因系列名被 ASR 糊写
+       锚不上时——博主明明口播了版本，兜底假设失效，不再静默贴最近已知版本，返回
+       UNKNOWN 走待确认（根因：muse spark→muse bug 把 1.3 静默贴成 1.2）。
     ②③ 用 known 破歧/兜底时 from_known=True（跳过组合闸——known 集即权威、无法误绑错版本）。"""
     combos = anchors["combos"].get(series, set())
     cand = [c for c in combos if c[1] == variant] if variant else list(combos)
@@ -314,8 +317,8 @@ def _coref(series: str, variant: str, anchors: dict, known: set | None,
         if len(kc) == 1:
             return kc[0][0], kc[0][1], True   # known 破本视频锚定歧义
         return None, variant, False
-    # 本视频无锚点 → 已知版本集唯一兜底
-    if known:
+    # 本视频无锚点 → 已知版本集唯一兜底（但 raw 带版本号却锚不上 → 别静默贴错，走待确认）
+    if known and not raw_has_version:
         kc = {(v, var) for (s, v, var) in known if s == series and (not variant or var == variant)}
         if len(kc) == 1:
             v, var = next(iter(kc))
@@ -375,7 +378,8 @@ def resolve_record(model_raw: str, model_series: str, model_version: str,
     # 步骤4：共指兜底（本视频锚定优先，无锚点/歧义退已知版本集）
     from_known = False
     if version is None:
-        version, variant, from_known = _coref(series, variant, anchors, known, data)
+        version, variant, from_known = _coref(series, variant, anchors, known, data,
+                                              raw_has_version=bool(rd))
         if version is None:
             return UNK
 
