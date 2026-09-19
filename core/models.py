@@ -404,13 +404,51 @@ def resolve_record(model_raw: str, model_series: str, model_version: str,
     return canonical, series, stored_version, variant
 
 
+def _canon_series_name(data: dict, series: str) -> str:
+    """把用户输入的系列名归到 models.yml 的正式键：精确 → 忽略大小写 → 别名（忽略大小写）。
+    找不到则原样返回（交由 compose_canonical 抛 ConfigError）。"""
+    if series in data:
+        return series
+    low = (series or "").strip().lower()
+    for s in data:
+        if s.lower() == low:
+            return s
+    for s, cfg in data.items():
+        if low in [a.lower() for a in (cfg.get("aliases") or [])]:
+            return s
+    return series
+
+
+def _canon_variant_name(cfg: dict, variant: str) -> str:
+    """把用户输入的变体名归到该系列的正式变体键：精确 → 忽略大小写 → 变体别名（忽略大小写）。
+    找不到则原样返回（交由 compose_canonical 抛 ConfigError）。"""
+    if not variant:
+        return ""
+    vs = _series_variants(cfg)
+    if variant in vs:
+        return variant
+    low = variant.strip().lower()
+    for v in vs:
+        if v.lower() == low:
+            return v
+    for v, vc in (cfg.get("variants") or {}).items():
+        if low in [a.lower() for a in ((vc or {}).get("aliases") or [])]:
+            return v
+    return variant
+
+
 def normalize_triple(series: str, version: str, variant: str = "",
                      *, data: dict | None = None) -> tuple[str, str, str, str]:
     """人工指定的 (series, version, variant) → (canonical, series, stored_version, variant)。
     **不做锚定**（人工即权威），只做 compose_canonical（round-trip 撞名校验）+ version_map 归一，
     与 resolve_record 末尾同款；stored_version 与 known_versions 三元组一致。供校正命令/登记/测试共用。
-    非法系列/变体/空版本/撞名 → 抛 ConfigError（由调用方转用户可见回执）。"""
+    系列/变体名对用户输入宽容：精确→忽略大小写→别名（如 `preview`/`预览版`→`Preview`、
+    `deepseek`→`DeepSeek`）。非法系列/变体/空版本/撞名 → 抛 ConfigError（调用方转用户可见回执）。"""
     data = data if data is not None else load_series()
+    series = _canon_series_name(data, series)
+    cfg = data.get(series)
+    if cfg is not None:
+        variant = _canon_variant_name(cfg, variant)
     canonical = compose_canonical(series, version, variant, data=data)  # 校验 + round-trip
     stored_version = _apply_version_map(series, norm_version(version), data)
     return canonical, series, stored_version, (variant or "")

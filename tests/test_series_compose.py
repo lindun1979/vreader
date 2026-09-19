@@ -106,3 +106,21 @@ def test_normalize_triple_bad_series_raises():
 def test_normalize_triple_bad_variant_raises():
     with pytest.raises(models.ConfigError):
         models.normalize_triple("DeepSeek", "4.1", "Nope")
+
+
+# ---------- V-M16 normalize_triple 大小写/别名宽容 ----------
+
+def test_normalize_triple_variant_case_insensitive():
+    assert models.normalize_triple("Hunyuan", "4.0", "preview")[0] == "Hunyuan 4.0 Preview"
+    assert models.normalize_triple("Hunyuan", "4.0", "PREVIEW")[3] == "Preview"
+
+
+def test_normalize_triple_variant_alias_and_cjk():
+    assert models.normalize_triple("Hunyuan", "4.0", "预览版")[0] == "Hunyuan 4.0 Preview"
+    assert models.normalize_triple("Hunyuan", "4.0", "proveil")[0] == "Hunyuan 4.0 Preview"
+
+
+def test_normalize_triple_series_case_and_alias():
+    assert models.normalize_triple("deepseek", "4.1", "flash")[0] == "DeepSeek V4.1 Flash"
+    # 系列别名（ds）也可
+    assert models.normalize_triple("ds", "4.1", "Flash")[1] == "DeepSeek"
