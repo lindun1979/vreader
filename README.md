@@ -9,6 +9,10 @@
 - `vr明细 <video_id>` 看某视频逐条明细（记录码 + 状态 + 完整证据；未知/新版本另显 raw 原文 + 归一三元组）
 - `vr确认 <video_id>` 批量确认普通/新版本待确认记录入榜（**新版本首次确认即登记**，此后同版本自动上榜）；
   `vr确认 <video_id> <记录码>` 逐条确认矛盾记录；`vr确认 <video_id> rev:<版本>` 绑版本确认（防确认过时内容）
+- `vr确认 <video_id> <记录码>[@<result_rev>]=<系列>/<版本>[/<变体>]` **校正模型名并确认**：对未知
+  （UNKNOWN）或版本被 ASR 糊错的待确认记录人工指定三元组，一步改名 + 登记 + 上榜；系列/变体名忽略
+  大小写、认别名。改名改 rid，双存储用 `correction_operations` journal + CAS 恢复（崩溃/写失败自愈）；
+  停机期被 reprocess 改写则转 `needs_review`，CLI `--list-corrections` / `--resolve-correction` 人工解决
 
 **模型归一（series-norm）**：`models.yml` 是**系列表**（format 身份模板 + 系列别名 + 两级昵称 + 变体），
 版本号不写死——代码对转写/标题做「提及锚定」从源文本数字拼合 canonical（`GRM5.3`、`step3.7 flash`
