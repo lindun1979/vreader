@@ -127,8 +127,11 @@ Claude Sonnet:
 GPT:
   format: "GPT {v}"
   aliases: [gpt, gbt, 芝麻开门]
-  # GPT 5.6 有三个变体：Sol / Terra / Luna（用户 2026-09 确认）。Sol 含 ASR 糊写 soul/soap
+  # GPT 5.6 有三个变体：Sol / Terra / Luna（用户 2026-09 确认）。Sol 含 ASR 糊写 soul/soap。
+  # GPT 6 有 Astra / Sol / Luna（用户 2026-09 确认，随 Sol/Luna 发布补 Astra；裸「GPT 6」=Astra）。
   variants:
+    Astra:
+      aliases: [astra]
     Luna:
       aliases: [luna, 露娜]
     Sol:
