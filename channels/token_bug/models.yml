@@ -84,6 +84,8 @@ Step:
   variants:
     Flash:
       aliases: [flash]
+    Preview:
+      aliases: [preview, 预览版, proveil]
   seed_variant_versions: {Flash: ["3.7"]}
 
 Muse Spark:
