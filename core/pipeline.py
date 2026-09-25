@@ -10,7 +10,7 @@ import shutil
 import time
 from pathlib import Path
 
-from . import config, db, douyin, extract as extract_mod, lock, util
+from . import config, db, douyin, extract as extract_mod, lock, models, util
 
 CHANNEL = "token_bug"
 
@@ -141,9 +141,54 @@ def _finish(conn, aweme_id: str, chat_id: str, ex: dict, p: dict) -> str:
         msg += f"\n⚠️ {counts['approved_stale']} 条此前已确认的记录本次消失（已下榜）。"
     if config.GLADIA_API_KEY and ex.get("asr_model") != "gladia-v2":
         msg += f"\n⚠️ ASR 走了兜底 {ex.get('asr_model')}（Gladia 未生效，查额度/err.log）"
+    a = models.build_anchors("", ex.get("title") or "")
+    warnings = _receipt_warnings(ex, set(a["versions"]) | a["series"])
+    if warnings:
+        msg += "".join(f"\n⚠️ {w}" for w in warnings)
+        if "vr明细" not in msg:
+            msg += f"\n👉 查看明细：vr明细 {aweme_id}"
     db.finalize_task(conn, aweme_id, db.SUCCEEDED, chat_id=chat_id, content=msg)
     _cleanup_media(p)
     return db.SUCCEEDED
+
+
+_MISSING_CELLS_SHOWN = 5
+_LEVEL_ORDER = {lv: i for i, lv in enumerate(["青铜", "白银", "黄金", "钻石", "王者"])}
+
+
+def _receipt_warnings(ex: dict, title_series: set[str]) -> list[str]:
+    """回执告警（只告警，不改决策、不重跑）：丢弃原因聚合、UNKNOWN/空 bug_id 计数、
+    名单×bug 疑似漏格（名单与 bug 集合均由记录推断）、标题提到但无任何记录的系列。"""
+    out: list[str] = []
+    recs = ex.get("records") or []
+    reasons: dict[str, int] = {}
+    for d in ex.get("dropped") or []:
+        k = str(d.get("reason", ""))[:20]
+        reasons[k] = reasons.get(k, 0) + 1
+    if ex.get("dropped_count", 0) > 0:
+        agg = "、".join(f"{k} {n} 条" for k, n in sorted(reasons.items(), key=lambda x: (-x[1], x[0])))
+        out.append(f"丢弃 {ex['dropped_count']} 条：{agg}" if agg else f"丢弃 {ex['dropped_count']} 条")
+    n_unknown = sum(1 for r in recs if r.get("model_canonical") == "UNKNOWN")
+    if n_unknown:
+        out.append(f"未识别模型 {n_unknown} 条")
+    n_nobug = sum(1 for r in recs if not extract_mod._bug_norm(r))
+    if n_nobug:
+        out.append(f"缺 bug 编号 {n_nobug} 条")
+    known = [r for r in recs if r.get("model_canonical") != "UNKNOWN"]
+    roster = {r["model_canonical"] for r in known}
+    bugs = {(r["bug_level"], extract_mod._bug_norm(r)) for r in known if extract_mod._bug_norm(r)}
+    have = {(r["model_canonical"], r["bug_level"], extract_mod._bug_norm(r)) for r in known}
+    missing = sorted(((m, lv, b) for m in roster for lv, b in bugs if (m, lv, b) not in have),
+                     key=lambda x: (x[0], _LEVEL_ORDER.get(x[1], 99), x[1], x[2]))
+    if missing:
+        shown = "；".join(f"{m} × {lv} {b}" for m, lv, b in missing[:_MISSING_CELLS_SHOWN])
+        more = f" 等 {len(missing)} 格" if len(missing) > _MISSING_CELLS_SHOWN else ""
+        out.append(f"疑似漏提：{shown}{more}（按名单推断）")
+    for s in sorted(title_series):
+        if not any(r.get("model_series") == s or r.get("model_canonical", "").startswith(s)
+                   for r in known):
+            out.append(f"标题提到 {s} 但无任何记录（疑似漏提）")
+    return out
 
 
 def _write_decision_snapshot(ex: dict, p: dict, known_b) -> None:
