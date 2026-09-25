@@ -88,11 +88,13 @@ def _series_table(data: dict, known: set[tuple[str, str, str]]) -> str:
 
 
 def _build_prompt(transcript: str, title: str = "",
-                  known: set[tuple[str, str, str]] | None = None) -> str:
+                  known: set[tuple[str, str, str]] | None = None,
+                  template: str | None = None) -> str:
+    """template=None 用当前频道模板（生产路径）；评测脚本可传入旧/候选模板文本。"""
     data = models_mod.load_series()
     series_table = _series_table(data, known or set())
     series_names = "\n".join(f"- {s}" for s in data)
-    tpl = _prompt_template()
+    tpl = _prompt_template() if template is None else template
     return (tpl.replace("{SERIES_LIST}", series_names)
                .replace("{SERIES_TABLE}", series_table)
                .replace("{TITLE}", title or "（无标题）")
