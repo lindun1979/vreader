@@ -54,6 +54,10 @@
   写入 `known_versions_used`（**永不改写**），决策快照写 `known_versions_used_at_decision`（M08）。
 - 提取输出必须过 schema + evidence_quote 是 transcript 子串，否则丢弃（全丢→no_content
   成功，不当失败重试）；缓存 extract.json 读回也必过 `validate_extract`，坏则留证重建。
+  **分段证据**（省略号分隔的有序多段原文，每段 ≥8 字、段间隔 ≤800 归一化字符）兜底接受但
+  **强制人工复核**（confidence 封顶 0.6，不 auto_ok）；prompt 仍要求连续摘录。某等级本视频只有
+  一个 bug_id 时空 bug_id 回填（让同格 attempt_key 对齐 → 矛盾组走 pending_conflict，不自动裁决）。
+  回执带丢弃原因聚合 + 名单×bug 疑似漏格告警（只告警，不改决策；见 `pipeline._receipt_warnings`）。
 - 单实例执行权：数据目录 flock（serve 最先取），CLI 写路径同锁，`--board` 纯读不取锁。
 - 执行边界：外网/重型阶段带 subprocess timeout + 下载字节/时限硬限 + 任务总预算；
   健康 healthz 三态判定，不健康返 503（线程死/outbox 积压/db 连错/低磁盘/ASR 卡死）。
@@ -67,7 +71,7 @@ reprocess/迁移等 CLI 写操作需 flock，**必须先 `launchctl unload` 停 
 launchd 管理（禁 nohup），登记运维斯 SERVICES.md。
 
 ## 测试
-`pytest -q`（236 项全绿，**只在研发机跑**；生产机不跑 pytest）。手动处理：
+`pytest -q`（278 项全绿，**只在研发机跑**；生产机不跑 pytest）。手动处理：
 `python -m core.cli "<链接>"`；重跑提取：`--reprocess <id>`；强制用 Gladia 重转（修此前落
 兜底 ASR 的数据，删 transcript 走全量管线）：`--retranscribe <id>`。
 校正命令（V-M16，见 `docs/plans/vreader-confirm-correction-command-plan-v8.md`）：
@@ -81,9 +85,12 @@ pending_new_version 记录人工指定三元组，一步「改 extract 四字段
 `needs_review`，人工 CLI 解决：`--list-corrections`（只读 `db.connect_ro`）查看，
 `--resolve-correction <op_id> <keep-file|apply-journal>`（停 serve、取 flock）二选一。
 `keep-file` 保留全局版本登记、仅回退产物。含空格系列名（Claude Opus 等）不支持，走手改。
-真值集：`tests/gold/token_bug/gold.json`（用户人工标注 7 视频得分 + aweme_id 映射，进仓）；
+真值集：`tests/gold/token_bug/gold.json`（用户人工标注 13 视频得分 + aweme_id 映射，进仓）；
 准确率评测（只读，隔离副本）：`python ops/eval_gold.py <data副本> --min-extract 96`
 （比较键 aweme_id×canonical×bug_id，缺格/多报/重复/冲突全计错，双口径 + 逐格 diff）。
+单视频外科式修复（不重跑 LLM）：`ops/repair_extract.py --data <data> --spec <私有spec> --expect-spec-sha256 <sha> [--apply]`
+（默认 dry-run 只读；apply 取 flock、备份 `data/backup/repair-<id>-<ts>/`、实际决策≠预期自动恢复）。
+提取回放（不调 LLM）：`ops/replay_extract_fixture.py`；prompt 重复评测（agy，nonce 防缓存）：`ops/eval_extract_repeat.py`。
 升级/回滚运维手册：`docs/ops-series-norm-upgrade-rollback.md`（快照清单 + 有界回滚 +
 撤销登记≠撤销批准）；上游透传补丁：`docs/skill_router-vreader-help-detail-confirm.patch`
 （验收 `ops/verify_upstream_routing.py <life-assistant-checkout>`）。

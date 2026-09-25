@@ -1,0 +1,163 @@
+{
+ "_note": "合成回放（自造转写，复现 7689 事故 4 种形态：王者题头与判定句相隔 >10 行、按轮拆条 r1(错)+r3(省略号拼接)、另一模型 r2 省略号拼接、黄金匿名轮次、黄金 bug_id 空）。不含任何真实转写。",
+ "aweme_id": "synthetic0001",
+ "title": "三模型大乱斗 Kimi K3，GLM5.3，Qwen3.8",
+ "transcript": "黄金G006 Kimi K3 第一轮的修改结果 点击验证 非常轻松没有问题恭喜Kimi加两分\n黄金GLM5.3第一轮的修改结果 点击验证 当然没有问题恭喜GLM5.3同样轻松加两分\n黄金第一轮的修改结果 正在验证中 很好同样正确 恭喜三位选手黄金bug上旗开得胜各加两分\n钻石D003 Kimi K3 第一轮的修改结果 正在验证中 做对了恭喜Kimi再加三分\n钻石D003 GLM5.3 第一轮的修改结果 点击验证 没有问题同样也做对了\n钻石D003 Qwen3.8 第一轮的修改结果 点击验证 果然也是做对了纷纷上了三分\n王者K005 Kimi K3 第一轮的修改结果 正在验证中 哎呀没做对没关系他还有第二次机会\n王者K005 GLM5.3 第一轮的修改结果 能不能拿下 还是没做对没做对就对了正常正常有请下一位\n王者K005 Qwen3.8 第一轮的修改结果 点击验证 很遗憾也没做对\n王者K005 Kimi K3 第二轮的修改结果 点击验证 做对了做对了恭喜Kimi第二轮就拿下了这个王者bug\n王者K005 GLM5.3第二轮的修改结果 正在验证中 时间可能会比较久咱们快进一下 哦还是没改对\n弹幕刷屏第1波 大家稍安勿躁 我们继续看代码改动的范围和测试用例\n弹幕刷屏第2波 大家稍安勿躁 我们继续看代码改动的范围和测试用例\n弹幕刷屏第3波 大家稍安勿躁 我们继续看代码改动的范围和测试用例\n弹幕刷屏第4波 大家稍安勿躁 我们继续看代码改动的范围和测试用例\n弹幕刷屏第5波 大家稍安勿躁 我们继续看代码改动的范围和测试用例\n弹幕刷屏第6波 大家稍安勿躁 我们继续看代码改动的范围和测试用例\nGLM5.3 第三轮的修改结果 点击验证 大家都看着呢 最后的时刻GLM5.3还是把他给拿下了恭喜再加一分\n王者K005 Qwen3.8第二轮的修改结果 正在验证中 他改对的可能性可能不高啊\n弹幕刷屏第7波 大家稍安勿躁 我们继续看代码改动的范围和测试用例\n弹幕刷屏第8波 大家稍安勿躁 我们继续看代码改动的范围和测试用例\n不对 他改对了啊哈哈哈哈 恭喜Qwen3.8用最小的改动同样再加两分\n弹幕刷屏第9波 大家稍安勿躁 我们继续看代码改动的范围和测试用例\n弹幕刷屏第10波 大家稍安勿躁 我们继续看代码改动的范围和测试用例\n弹幕刷屏第11波 大家稍安勿躁 我们继续看代码改动的范围和测试用例\n弹幕刷屏第12波 大家稍安勿躁 我们继续看代码改动的范围和测试用例",
+ "raw_llm_records": [
+  {
+   "model_raw": "Kimi K3",
+   "model_series": "Kimi",
+   "model_version": "3",
+   "model_variant": "",
+   "bug_level": "黄金",
+   "bug_id": "G006",
+   "solved_round": 1,
+   "evidence_quote": "黄金G006 Kimi K3 第一轮的修改结果 点击验证 非常轻松没有问题恭喜Kimi加两分",
+   "confidence": 0.95
+  },
+  {
+   "model_raw": "GLM5.3",
+   "model_series": "GLM",
+   "model_version": "5.3",
+   "model_variant": "",
+   "bug_level": "黄金",
+   "bug_id": "",
+   "solved_round": 1,
+   "evidence_quote": "黄金GLM5.3第一轮的修改结果 点击验证 当然没有问题恭喜GLM5.3同样轻松加两分",
+   "confidence": 0.95
+  },
+  {
+   "model_raw": "Kimi K3",
+   "model_series": "Kimi",
+   "model_version": "3",
+   "model_variant": "",
+   "bug_level": "钻石",
+   "bug_id": "D003",
+   "solved_round": 1,
+   "evidence_quote": "钻石D003 Kimi K3 第一轮的修改结果 正在验证中 做对了恭喜Kimi再加三分",
+   "confidence": 0.95
+  },
+  {
+   "model_raw": "GLM5.3",
+   "model_series": "GLM",
+   "model_version": "5.3",
+   "model_variant": "",
+   "bug_level": "钻石",
+   "bug_id": "D003",
+   "solved_round": 1,
+   "evidence_quote": "钻石D003 GLM5.3 第一轮的修改结果 点击验证 没有问题同样也做对了",
+   "confidence": 0.95
+  },
+  {
+   "model_raw": "Qwen3.8",
+   "model_series": "Qwen",
+   "model_version": "3.8",
+   "model_variant": "",
+   "bug_level": "钻石",
+   "bug_id": "D003",
+   "solved_round": 1,
+   "evidence_quote": "钻石D003 Qwen3.8 第一轮的修改结果 点击验证 果然也是做对了纷纷上了三分",
+   "confidence": 0.95
+  },
+  {
+   "model_raw": "GLM5.3",
+   "model_series": "GLM",
+   "model_version": "5.3",
+   "model_variant": "",
+   "bug_level": "王者",
+   "bug_id": "K005",
+   "solved_round": 1,
+   "evidence_quote": "王者K005 GLM5.3 第一轮的修改结果 能不能拿下 还是没做对没做对就对了正常正常有请下一位",
+   "confidence": 0.9
+  },
+  {
+   "model_raw": "Kimi K3",
+   "model_series": "Kimi",
+   "model_version": "3",
+   "model_variant": "",
+   "bug_level": "王者",
+   "bug_id": "K005",
+   "solved_round": 2,
+   "evidence_quote": "王者K005 Kimi K3 第二轮的修改结果 点击验证 做对了做对了恭喜Kimi第二轮就拿下了这个王者bug",
+   "confidence": 0.95
+  },
+  {
+   "model_raw": "Kimi K3",
+   "model_series": "Kimi",
+   "model_version": "3",
+   "model_variant": "",
+   "bug_level": "王者",
+   "bug_id": "K005",
+   "solved_round": 1,
+   "evidence_quote": "王者K005 Kimi K3 第一轮就顺利修好了全部并发问题",
+   "confidence": 0.9
+  },
+  {
+   "model_raw": "Qwen3.8",
+   "model_series": "Qwen",
+   "model_version": "3.8",
+   "model_variant": "",
+   "bug_level": "王者",
+   "bug_id": "K005",
+   "solved_round": 1,
+   "evidence_quote": "王者BUG003Qwen3.8 第一轮的修改结果 他改对了啊哈哈哈哈",
+   "confidence": 0.6
+  },
+  {
+   "model_raw": "GLM5.3",
+   "model_series": "GLM",
+   "model_version": "5.3",
+   "model_variant": "",
+   "bug_level": "王者",
+   "bug_id": "K005",
+   "solved_round": 3,
+   "evidence_quote": "王者K005 GLM5.3第二轮的修改结果 正在验证中 时间可能会比较久咱们快进一下 哦还是没改对...GLM5.3 第三轮的修改结果 点击验证 大家都看着呢 最后的时刻GLM5.3还是把他给拿下了恭喜再加一分",
+   "confidence": 0.95
+  },
+  {
+   "model_raw": "Qwen3.8",
+   "model_series": "Qwen",
+   "model_version": "3.8",
+   "model_variant": "",
+   "bug_level": "王者",
+   "bug_id": "K005",
+   "solved_round": 2,
+   "evidence_quote": "王者K005 Qwen3.8第二轮的修改结果 正在验证中 他改对的可能性可能不高啊 ... 不对 他改对了啊哈哈哈哈 恭喜Qwen3.8用最小的改动同样再加两分",
+   "confidence": 0.95
+  }
+ ],
+ "known_at_extract": [
+  [
+   "Kimi",
+   "3",
+   ""
+  ],
+  [
+   "GLM",
+   "5.3",
+   ""
+  ],
+  [
+   "Qwen",
+   "3.8",
+   ""
+  ]
+ ],
+ "known_at_decision": [
+  [
+   "Kimi",
+   "3",
+   ""
+  ],
+  [
+   "GLM",
+   "5.3",
+   ""
+  ],
+  [
+   "Qwen",
+   "3.8",
+   ""
+  ]
+ ]
+}
