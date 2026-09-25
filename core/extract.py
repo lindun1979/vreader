@@ -164,6 +164,25 @@ def _record_id(aweme_id: str, r: dict) -> str:
     return hashlib.sha256(key.encode()).hexdigest()[:16]
 
 
+def _backfill_bug_ids(records: list[dict]) -> tuple[list[dict], int]:
+    """空 bug_id 回填：某等级本视频恰好只有 1 个非空 bug_id → 该等级空 bug_id 记录填成它
+    （使同格记录 attempt_key 对齐，矛盾组机制才能触发）；0 或 ≥2 个不动。返回新列表（浅拷贝，
+    不改入参）与回填条数。"""
+    ids: dict[str, set[str]] = {}
+    for r in records:
+        if _bug_norm(r):
+            ids.setdefault(r.get("bug_level"), set()).add(_bug_norm(r))
+    out, n = [], 0
+    for r in records:
+        r = dict(r)
+        only = ids.get(r.get("bug_level"), set())
+        if not _bug_norm(r) and len(only) == 1:
+            r["bug_id"] = next(iter(only))
+            n += 1
+        out.append(r)
+    return out, n
+
+
 def _bug_prefix_conflict(r: dict) -> bool:
     """bug_id 已知前缀却指向别的等级（如 G005 标成钻石）→ 冲突（降 pending）。
     未知前缀不判冲突（可能是新命名规则）。"""
@@ -317,6 +336,39 @@ def _normalize_quote(s: str) -> str:
     return re.sub(r"\s+", "", s or "")
 
 
+# 分段证据（省略号拼接的有序多段原文）：兜底接受，但强制人工复核（confidence 封顶）
+_SEGMENT_MIN_LEN = 8
+_SEGMENT_MAX_GAP = 800
+SEGMENTED_CONFIDENCE_CAP = 0.6
+
+
+def _evidence_segments(quote: str) -> list[str]:
+    """按省略号（... / …）切段，每段归一化，去空段。"""
+    segs = (_normalize_quote(x) for x in re.split(r"\.{3,}|…+", quote or ""))
+    return [x for x in segs if x]
+
+
+def _evidence_in_transcript(quote: str, norm_tx: str) -> bool:
+    """证据是否为转写原文：单段 = 归一化子串（原口径）；多段 = 每段 ≥8 字，且存在一组
+    按序出现位置（后段起点 ≥ 前段终点、间隔 ≤800，偏移按归一化字符串计）。
+    每段枚举全部出现位置做可行性传播（不做首次出现贪心）。"""
+    segs = _evidence_segments(quote)
+    if len(segs) <= 1:
+        return _normalize_quote(quote) in norm_tx
+    if any(len(x) < _SEGMENT_MIN_LEN for x in segs):
+        return False
+    ends: list[int] | None = None  # 上一段所有可行出现的终点
+    for seg in segs:
+        starts = [m.start() for m in re.finditer(f"(?={re.escape(seg)})", norm_tx)]
+        if ends is not None:
+            starts = [p for p in starts
+                      if any(e <= p <= e + _SEGMENT_MAX_GAP for e in ends)]
+        if not starts:
+            return False
+        ends = [p + len(seg) for p in starts]
+    return True
+
+
 def validate_extract(extract: dict, *, transcript: str | None = None,
                      expected_video_id: str | None = None) -> None:
     """统一产物校验入口（C3/M06 双轨）：读回缓存/reprocess 前必过，否则视为不可信。
@@ -359,7 +411,7 @@ def validate_extract(extract: dict, *, transcript: str | None = None,
         q = _normalize_quote(r.get("evidence_quote", ""))
         if len(q) < 4:
             raise ExtractError("evidence 归一后过短(<4)")
-        if norm_tx is not None and q not in norm_tx:
+        if norm_tx is not None and not _evidence_in_transcript(r.get("evidence_quote", ""), norm_tx):
             raise ExtractError("evidence 非转写子串")
 
 
@@ -446,11 +498,17 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
         if rerrs:
             dropped.append({"record": r, "reason": rerrs[0].message})
             continue
-        # 证据必须是转写子串（归一化后）
-        if _normalize_quote(r.get("evidence_quote", "")) not in norm_tx:
+        # 证据必须是转写原文（归一化后子串；或省略号分隔的有序多段）
+        if not _evidence_in_transcript(r.get("evidence_quote", ""), norm_tx):
             dropped.append({"record": r, "reason": "evidence 非转写子串"})
             continue
+        if len(_evidence_segments(r.get("evidence_quote", ""))) > 1:
+            # 分段证据只证明每段是原文、证明不了拼起来支持结论 → 强制人工复核
+            r["confidence"] = min(r.get("confidence", 0), SEGMENTED_CONFIDENCE_CAP)
         records.append(r)
+    records, n_backfill = _backfill_bug_ids(records)
+    if n_backfill:
+        print(f"[extract] bug_id 回填 {n_backfill} 条", flush=True)
 
     used = sorted([list(t) for t in known])
     extract = {

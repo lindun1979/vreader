@@ -32,3 +32,74 @@ def test_evidence_whitespace_normalized():
     ex = extract.build_extract(aweme_id="v", title="t", transcript=TX,
                                claude_text=_one("它  第二轮 才解出来"))
     assert ex["records"][0]["model_canonical"] == "Kimi K3"
+
+
+# ---- WP-C 分段证据（省略号分隔的有序多段原文）----
+import pytest
+
+SEG_A = "王者题K005第二轮的修改结果正在验证中"
+SEG_B = "最后的时刻它还是把他给拿下了恭喜再加一分"
+
+
+def _tx(gap: int, a: str = SEG_A, b: str = SEG_B, prefix: str = "") -> str:
+    return prefix + a + ("填" * gap) + b
+
+
+def _seg(tx, quote, conf=0.95):
+    return extract.build_extract(aweme_id="v", title="t", transcript=tx, claude_text=json.dumps(
+        {"records": [{"model_raw": "Kimi K3", "bug_level": "王者", "bug_id": "K005",
+                      "solved_round": 2, "evidence_quote": quote, "confidence": conf}]},
+        ensure_ascii=False))
+
+
+def test_two_segments_in_order_kept_with_confidence_capped():
+    ex = _seg(_tx(100), f"{SEG_A}...{SEG_B}")
+    assert len(ex["records"]) == 1
+    assert ex["records"][0]["confidence"] <= 0.6
+
+
+def test_segments_reversed_dropped():
+    ex = _seg(_tx(100), f"{SEG_B}...{SEG_A}")
+    assert ex["records"] == [] and ex["dropped"][0]["reason"] == "evidence 非转写子串"
+
+
+def test_segment_shorter_than_8_dropped():
+    ex = _seg(_tx(10), f"{SEG_A}...{SEG_B[:7]}")
+    assert ex["records"] == []
+
+
+@pytest.mark.parametrize("gap,kept", [(800, True), (801, False)])
+def test_gap_boundary(gap, kept):
+    ex = _seg(_tx(gap), f"{SEG_A}...{SEG_B}")
+    assert bool(ex["records"]) is kept
+
+
+def test_chinese_ellipsis_works():
+    ex = _seg(_tx(50), f"{SEG_A}……{SEG_B}")
+    assert len(ex["records"]) == 1 and ex["records"][0]["confidence"] <= 0.6
+
+
+def test_segment_not_in_transcript_dropped():
+    ex = _seg(_tx(50), f"{SEG_A}...这句话根本没有出现在转写里面")
+    assert ex["records"] == []
+
+
+def test_repeated_segment_uses_feasible_ordered_match():
+    # SEG_A 首次出现距 SEG_B >800，第二次出现距 SEG_B 100 → 应保留（不能首次出现贪心）
+    tx = SEG_A + "填" * 900 + SEG_A + "填" * 100 + SEG_B
+    ex = _seg(tx, f"{SEG_A}...{SEG_B}")
+    assert len(ex["records"]) == 1
+
+
+def test_single_segment_confidence_untouched():
+    ex = _seg(_tx(10), SEG_A)
+    assert ex["records"][0]["confidence"] == 0.95
+
+
+def test_validate_extract_segmented_evidence():
+    tx = _tx(100)
+    ex = _seg(tx, f"{SEG_A}...{SEG_B}")
+    extract.validate_extract(ex, transcript=tx, expected_video_id="v")  # 合法多段不报错
+    ex["records"][0]["evidence_quote"] = f"{SEG_B}...{SEG_A}"
+    with pytest.raises(extract.ExtractError, match="evidence 非转写子串"):
+        extract.validate_extract(ex, transcript=tx, expected_video_id="v")
