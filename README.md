@@ -39,6 +39,9 @@
   （本地 CLI）+ 频道 prompt + 模型系列表（LLM 出 series/version/variant，代码提及锚定拼 canonical）。
   **轮次驱动打分**：LLM 出「第几轮做对」(`solved_round`)，代码反推得分；钻石/王者第4轮做对
   = 白做（0分但已解，榜单显示第[4]次），区别于「没做对」。
+  **完整性加固**（2026-09）：证据须为转写原文——省略号拼接的有序多段原文兜底接受但强制人工复核
+  （confidence≤0.6）；某等级只有一个 bug 编号时空编号回填，使同格矛盾记录进 `pending_conflict`
+  人工裁决；回执附丢弃原因聚合、未识别/缺编号计数、名单×bug「疑似漏提」与标题系列无记录告警。
 - **状态**：SQLite（WAL、每线程独立连接、原子领取）；崩溃恢复按落盘产物前推跳过
   阶段（产物齐全时不依赖上游网络）；recover 递增 retry_count 防毒丸崩溃循环。
 - **通知**：outbox 表，与任务终态同事务写入（`db.finalize_task`，无静默失败），
@@ -59,7 +62,7 @@ core/        douyin/asr/extract/db/pipeline/service/feishu/routing/config/cli
 channels/token_bug/   extract_prompt.md · models.yml · board.py
 schemas/     token_bug.extract.schema.json
 ops/         部署与验证脚本、launchd 模板
-tests/       pytest（M2 门禁）；fixtures/gold 为 gitignore 的真实数据
+tests/       pytest；gold/ 真值集与合成回放 fixture 进仓，`fixtures/*.private.*`（真实转写）gitignore
 ```
 
 ## 开发
@@ -75,6 +78,13 @@ python -m core.cli --render                  # 用现有 extract 重渲染 board
 python -m core.cli --reprocess <aweme_id>   # 现有 transcript 重跑提取+决策（prompt/别名改动后）
 python -m core.cli --retranscribe <aweme_id> # 删 transcript 强制用 Gladia 重转+提取（修兜底 ASR 数据）
 python -m core.service                       # 起服务
+python ops/eval_gold.py <data副本> --min-extract 96        # gold 准确率评测（只读）
+python ops/repair_extract.py --data <data> --spec <spec> --expect-spec-sha256 <sha> [--apply]
+                                             # 单视频外科式修复（默认 dry-run；apply 需停 serve）
+python ops/replay_extract_fixture.py --fixture ... --sha256 ... --expect-file ... --expect-sha256 ...
+                                             # 提取回放（不调 LLM）
+python ops/eval_extract_repeat.py --data <副本> --videos gold --runs N --out <dir> [--prompt <模板>]
+                                             # prompt 重复评测（agy，nonce 防缓存；研发机须带 AGY_PROXY）
 ```
 
 ## 纪律（public 仓）

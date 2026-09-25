@@ -13,6 +13,8 @@
 - 提取 LLM：生产机 **agy（Antigravity CLI）gemini-3.7-flash-medium 主**（生产链路 gold 97 格
   96/97≈99%；LLM_BACKEND=agy，直连不通须配 AGY_PROXY 代理，见 [[agy-on-prod-via-proxy]]），
   兜底 :8317 cliproxy 的 gemini-3.5-flash-lite（gold 86.6%）；配 LLM_MODEL/LLM_MODEL_FALLBACK。
+  **研发机（日本）调 agy 必须走与生产相同的美国代理**（`.env` 的 AGY_PROXY），否则双地登录触发
+  Google 风控（2026-09-25 两机 agy 同时被要求验证账号）。
   **轮次驱动**（2026-09 改，用户确认）：LLM 出 `solved_round`（第几轮做对；钻石/王者可到
   第4轮=白做0分但已解，0=没做对），代码 `derive_from_round` 反推 score/solved/rounds
   ——修掉钻石/王者 score=0 二义（第4轮做对 vs 没做对无法区分）。board 第4轮做对显示第[4]次、
