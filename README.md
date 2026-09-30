@@ -3,6 +3,9 @@
 把「视频博主 → 结构化知识」的通用管线。首个频道 `token_bug`：处理抖音博主
 「token（词源）」的模型实测视频，自动维护一张「模型 × bug 难度」榜单。
 
+**当前状态**：生产服务运行于 launchd；主转写为 Gladia、失败时回落到本地
+SenseVoiceSmall，生产提取主通道为 agy。当前提交的研发测试全量为 280 项。
+
 **用法（飞书）**：把抖音分享链接发给机器人 → 自动下载/转写/提取 → 处理完回执 →
 - `vr帮助` 显示用法说明
 - `vr榜单` 取回最新榜单
@@ -18,6 +21,9 @@
 版本号不写死——代码对转写/标题做「提及锚定」从源文本数字拼合 canonical（`GRM5.3`、`step3.7 flash`
 等新版本无需改表）。未见过的版本首次出现 → `pending_new_version`，`vr确认` 一次入库为已知版本。
 昵称（「一哥/火星刺客」）随期指向系列**当时最新**版本，只绑系列不绑版本号。
+`MiMo` 与 `MiniMax` 均支持 `Flash` 变体；例如人工确认 `MiMo/2.6/Flash`、
+`MiniMax/3.1/Flash` 会分别生成 `MiMo 2.6 Flash`、`MiniMax M3.1 Flash`，并在确认时登记版本，
+不会通过 seed 预置。
 
 ## 管线
 
@@ -71,7 +77,7 @@ tests/       pytest；gold/ 真值集与合成回放 fixture 进仓，`fixtures/
 python3.11 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env   # 填凭据，chmod 600
-pytest -q                                   # 全部单测
+pytest -q                                   # 全部单测（当前 280 项）
 python -m core.cli "<抖音分享链接>"          # 手动处理一条（建真值集）
 python -m core.cli --board                  # 打印榜单（纯读，不取写锁）
 python -m core.cli --render                  # 用现有 extract 重渲染 board.md（不重提取）
