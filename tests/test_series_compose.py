@@ -92,6 +92,13 @@ def test_normalize_triple_deepseek_flash():
         "DeepSeek V4.1 Flash", "DeepSeek", "4.1", "Flash")
 
 
+def test_normalize_triple_mimo_and_minimax_flash():
+    assert models.normalize_triple("MiMo", "2.6", "flash") == (
+        "MiMo 2.6 Flash", "MiMo", "2.6", "Flash")
+    assert models.normalize_triple("MiniMax", "3.1", "Flash") == (
+        "MiniMax M3.1 Flash", "MiniMax", "3.1", "Flash")
+
+
 def test_normalize_triple_version_map_opus():
     # Opus 5.0 → stored "5"（version_map），canonical "Claude Opus 5"
     canonical, series, sv, variant = models.normalize_triple("Claude Opus", "5.0", "")

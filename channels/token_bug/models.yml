@@ -71,6 +71,8 @@ MiMo:
   variants:
     Pro:
       aliases: [pro]
+    Flash:
+      aliases: [flash]
   seed_variant_versions: {Pro: ["2.5"]}
 
 Doubao Seed:
@@ -99,6 +101,9 @@ MiniMax:
   version_letter: M
   # 含 ASR 糊写：mimimax（叠字）
   aliases: [minimax, mimimax, mini max]
+  variants:
+    Flash:
+      aliases: [flash]
   seed_versions: ["3"]
 
 Longcat:

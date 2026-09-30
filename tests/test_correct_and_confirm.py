@@ -74,6 +74,24 @@ def test_pending_unknown_correction_registers_and_approves(conn):
     assert all(o["status"] == db.CORR_DONE for o in db.list_all_corrections(conn))
 
 
+def test_pending_unknown_mimo_and_minimax_flash_corrections_register(conn):
+    for aid, series, version, canonical in [
+        ("vmimo", "MiMo", "2.6", "MiMo 2.6 Flash"),
+        ("vminimax", "MiniMax", "3.1", "MiniMax M3.1 Flash"),
+    ]:
+        ex = _v2ex(aid, [_rec("UNKNOWN", "", "", "")])
+        _write(aid, ex)
+        ex_mod.apply_decisions(conn, aid, ex, known=db.list_known_versions(conn))
+        old_rid = ex_mod.record_id(aid, ex["records"][0])
+
+        ok, msg = ex_mod.correct_and_confirm(
+            conn, aid, _corr(old_rid, series, version, "Flash"), "admin")
+        assert ok, msg
+        assert (series, version, "Flash") in db.list_known_versions(conn)
+        disk = json.loads((config.video_dir("token_bug", aid) / "extract.json").read_text("utf-8"))
+        assert disk["records"][0]["model_canonical"] == canonical
+
+
 def test_pending_new_version_wrong_version_to_preview(conn):
     aid = "vhy"
     ex = _v2ex(aid, [_rec("Hunyuan 4", "Hunyuan", "4", "", raw="混元4Proveil", evidence=EV_HY)])
