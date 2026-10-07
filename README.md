@@ -44,7 +44,8 @@ SenseVoiceSmall，生产提取主通道为 agy。当前提交的研发测试全�
   兜底链走 :8317；生产直连不通须配 `AGY_PROXY` 代理）/ `openai`（:8317 cliproxy）/ `claude`
   （本地 CLI）+ 频道 prompt + 模型系列表（LLM 出 series/version/variant，代码提及锚定拼 canonical）。
   **轮次驱动打分**：LLM 出「第几轮做对」(`solved_round`)，代码反推得分；钻石/王者第4轮做对
-  = 白做（0分但已解，榜单显示第[4]次），区别于「没做对」。
+  = 白做（0分但已解，榜单显示第[4]次），区别于「没做对」；博主追加轮（如王者第5轮）做对同理
+  （已解0分，上限 `MAX_ROUND=9`，此前会被当越界丢弃）。
   **完整性加固**（2026-09）：证据须为转写原文——省略号拼接的有序多段原文兜底接受但强制人工复核
   （confidence≤0.6）；某等级只有一个 bug 编号时空编号回填，使同格矛盾记录进 `pending_conflict`
   人工裁决；回执附丢弃原因聚合、未识别/缺编号计数、名单×bug「疑似漏提」与标题系列无记录告警。
@@ -77,7 +78,7 @@ tests/       pytest；gold/ 真值集与合成回放 fixture 进仓，`fixtures/
 python3.11 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env   # 填凭据，chmod 600
-pytest -q                                   # 全部单测（当前 280 项）
+pytest -q                                   # 全部单测（当前 281 项）
 python -m core.cli "<抖音分享链接>"          # 手动处理一条（建真值集）
 python -m core.cli --board                  # 打印榜单（纯读，不取写锁）
 python -m core.cli --render                  # 用现有 extract 重渲染 board.md（不重提取）
