@@ -55,7 +55,7 @@
           "model_variant": {"type": "string"},
           "bug_level": {"type": "string", "enum": ["青铜", "白银", "黄金", "钻石", "王者"]},
           "bug_id": {"type": "string"},
-          "solved_round": {"type": "integer", "minimum": 0, "maximum": 4},
+          "solved_round": {"type": "integer", "minimum": 0, "maximum": 9},
           "score": {"type": "integer", "minimum": 0, "maximum": 3},
           "rounds": {"type": ["integer", "null"], "minimum": 1},
           "solved": {"type": "boolean"},

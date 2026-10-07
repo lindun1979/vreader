@@ -34,9 +34,9 @@ def _assert_no_content(ex, n_dropped=1):
 
 
 def test_score_out_of_range_dropped():
-    # 青铜最多 2 轮，solved_round=3 越界 → 丢弃 → 无有效记录 → no_content
+    # solved_round 超 MAX_ROUND(9) 越界 → 丢弃 → 无有效记录 → no_content
     ex = extract.build_extract(aweme_id="v1", title="t", transcript=TX,
-                               claude_text=_claude([_rec(solved_round=3)]))
+                               claude_text=_claude([_rec(solved_round=10)]))
     _assert_no_content(ex)
 
 

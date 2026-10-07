@@ -13,7 +13,10 @@ def test_derive_diamond_king_rounds():
     assert ex.derive_from_round("王者", 3) == (True, 1, 3)
     assert ex.derive_from_round("王者", 4) == (True, 0, 4)   # 白做：已解但 0 分
     assert ex.derive_from_round("钻石", 0) == (False, 0, None)  # 没做对
-    assert ex.derive_from_round("王者", 5) == (None, None, None)  # 越界
+    assert ex.derive_from_round("王者", 5) == (True, 0, 5)   # 博主追加轮做对：已解 0 分
+    assert ex.derive_from_round("王者", 9) == (True, 0, 9)
+    assert ex.derive_from_round("王者", 10) == (None, None, None)  # 超 MAX_ROUND 越界
+    assert ex.derive_from_round("王者", -1) == (None, None, None)
 
 
 def test_derive_gold_and_bronze():
@@ -64,3 +67,13 @@ def test_board_never_solved_not_counted():
     visible = {ex.record_id("v", rN)}
     md = board.render([exN], visible, ex.record_id)
     assert "0/1" in md  # 没做对 → 0/1
+
+
+def test_extra_round5_kept_and_shown():
+    # 回归（7692453282203192585）：王者打平后博主追加到第5轮做对 → 不丢弃，已解 0 分、显示第[5]次
+    ex5 = ex.build_extract(aweme_id="v", title="Grok4.5", transcript=TX, claude_text=_claude(5))
+    assert ex5["dropped_count"] == 0
+    r5 = ex5["records"][0]
+    assert (r5["solved"], r5["score"], r5["rounds"]) == (True, 0, 5)
+    md = board.render([ex5], {ex.record_id("v", r5)}, ex.record_id)
+    assert "1/1·第[5]次" in md

@@ -18,7 +18,7 @@
   **轮次驱动**（2026-09 改，用户确认）：LLM 出 `solved_round`（第几轮做对；钻石/王者可到
   第4轮=白做0分但已解，0=没做对），代码 `derive_from_round` 反推 score/solved/rounds
   ——修掉钻石/王者 score=0 二义（第4轮做对 vs 没做对无法区分）。board 第4轮做对显示第[4]次、
-  计解出、0分。标题作对战名单提召回。
+  计解出、0分；博主追加轮（如王者第5轮）做对同理=已解0分（`MAX_ROUND=9` 防垃圾值）。标题作对战名单提召回。
 - 模型归一（**series-norm**，见 `core/models.py` + `docs/plans/vreader-series-norm-plan-v5.md`）：
   `models.yml` 是**系列表**（format 身份模板 + 系列别名 + 两级昵称 + 变体 + seed 版本）。
   LLM 出 `model_raw/series/version/variant`（**不出 canonical，均不可信**）；代码对
@@ -73,7 +73,7 @@ reprocess/迁移等 CLI 写操作需 flock，**必须先 `launchctl unload` 停 
 launchd 管理（禁 nohup），登记运维斯 SERVICES.md。
 
 ## 测试
-`pytest -q`（278 项全绿，**只在研发机跑**；生产机不跑 pytest）。手动处理：
+`pytest -q`（281 项全绿，**只在研发机跑**；生产机不跑 pytest）。手动处理：
 `python -m core.cli "<链接>"`；重跑提取：`--reprocess <id>`；强制用 Gladia 重转（修此前落
 兜底 ASR 的数据，删 transcript 走全量管线）：`--retranscribe <id>`。
 校正命令（V-M16，见 `docs/plans/vreader-confirm-correction-command-plan-v8.md`）：

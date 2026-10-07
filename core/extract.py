@@ -103,6 +103,8 @@ def _build_prompt(transcript: str, title: str = "",
 
 # 每个等级的满分（第1轮做对得满分；机会数=满分）。得分反推轮次：rounds=满分-score+1。
 MAX_SCORE = {"青铜": 1, "白银": 1, "黄金": 2, "钻石": 3, "王者": 3}
+# 博主可能追加轮次（如王者打平后追加到第5轮）；超出满分轮次做对=已解 0 分。此为防垃圾值的上限。
+MAX_ROUND = 9
 
 
 def derive_solved_rounds(level: str, score: int) -> tuple[bool, int | None]:
@@ -119,12 +121,13 @@ def derive_solved_rounds(level: str, score: int) -> tuple[bool, int | None]:
 
 def derive_from_round(level: str, solved_round: int) -> tuple[bool, int | None, int | None]:
     """【v2 轮次驱动】由 (等级, 第几轮做对) 反推 (solved, score, rounds)。
-    solved_round: 0=没做对；1..maxs=第 n 轮解出（score=maxs-n+1）；maxs+1=最后一轮才解出
-    （"白做"，已解但 0 分）。越界（<0 或 >maxs+1，或非整数）→ (None,None,None) 表示无效。
+    solved_round: 0=没做对；1..maxs=第 n 轮解出（score=maxs-n+1）；maxs+1..MAX_ROUND=常规轮次
+    之后（含博主追加轮）才解出（"白做"，已解但 0 分）。越界（<0 或 >MAX_ROUND，或非整数）
+    → (None,None,None) 表示无效。
     规则（用户 2026-09 确认）：钻石/王者 1轮=3 2轮=2 3轮=1 4轮=0(已解)；黄金 1轮=2 2轮=1
-    3轮=0(已解)；青铜/白银 1轮=1 2轮=0(已解)；0=没做对。"""
+    3轮=0(已解)；青铜/白银 1轮=1 2轮=0(已解)；0=没做对。追加轮（如王者第5轮）同样已解 0 分。"""
     maxs = MAX_SCORE.get(level)
-    if maxs is None or not isinstance(solved_round, int) or solved_round < 0 or solved_round > maxs + 1:
+    if maxs is None or not isinstance(solved_round, int) or solved_round < 0 or solved_round > MAX_ROUND:
         return (None, None, None)  # type: ignore[return-value]
     if solved_round == 0:
         return (False, 0, None)
