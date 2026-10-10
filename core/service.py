@@ -120,12 +120,17 @@ def handle_ingest(conn, payload: dict) -> tuple[int, str]:
     except douyin.DownloadError as e:
         return 200, f"无法解析这个抖音链接（{e}）。可稍后重发。"
     existing = db.get_task(conn, aweme_id)
-    if existing:
+    if existing and existing["status"] != db.TERMINAL_FAILED:
         return 200, f"这条视频已在处理/已完成（当前状态：{existing['status']}）"
     if _disk_free_gb() < config.MIN_DISK_GB:  # 磁盘门禁（C4）：不足则拒收新任务
         return 200, "磁盘空间不足，暂时无法接收新任务，请稍后再试。"
     if db.count_active(conn) >= config.MAX_QUEUE:
         return 200, "队列已满，请稍后再发。"
+    if existing:  # terminal_failed：重发即重试（与"可重新发链接重试"提示一致）
+        if db.requeue_failed_task(conn, aweme_id, raw_link=text,
+                                  chat_id=chat_id, sender_id=sender_id):
+            return 200, f"上次处理失败，已重新排队：{aweme_id}。处理完会把结果发给你。"
+        return 200, "这条视频状态刚变化，请稍后再发。"
     # 2h：ingest 不做慢网络（不同步取 detail）——title 由 worker 处理时补，ACK 快速返回
     db.insert_task(conn, aweme_id=aweme_id, channel=pipeline.CHANNEL, raw_link=text,
                    chat_id=chat_id, sender_id=sender_id, title="")

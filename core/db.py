@@ -167,6 +167,18 @@ def insert_task(conn: sqlite3.Connection, *, aweme_id: str, channel: str,
         return False
 
 
+def requeue_failed_task(conn: sqlite3.Connection, aweme_id: str, *, raw_link: str,
+                        chat_id: str, sender_id: str) -> bool:
+    """用户重发已 terminal_failed 的链接：重置为 received（retry_count 清零）。
+    条件 UPDATE 只动 terminal_failed 行；返回 True=已重新排队。"""
+    cur = conn.execute(
+        "UPDATE tasks SET status=?, retry_count=0, next_retry_at=0, error=NULL,"
+        " raw_link=?, chat_id=?, sender_id=?, updated_at=? WHERE aweme_id=? AND status=?",
+        (RECEIVED, raw_link, chat_id, sender_id, time.time(), aweme_id, TERMINAL_FAILED))
+    conn.commit()
+    return cur.rowcount > 0
+
+
 def claim_next(conn: sqlite3.Connection) -> sqlite3.Row | None:
     """原子领取一个可执行任务（received 或到点的 retryable_failed）。"""
     now = time.time()

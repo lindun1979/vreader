@@ -37,6 +37,24 @@ def test_duplicate_ingest_idempotent(data_dir, monkeypatch):
     c.close()
 
 
+def test_resend_terminal_failed_requeues(data_dir, monkeypatch):
+    dbp = str(data_dir / "vreader.db")
+    service._DB_PATH = dbp
+    db.init(dbp)
+    c = db.connect(dbp)
+    monkeypatch.setattr(douyin, "resolve_aweme_id", lambda t, **k: "failed_id")
+    service.handle_ingest(c, {"text": "https://x/1", "chat_id": "c", "sender_id": "s"})
+    db.finalize_task(c, "failed_id", db.TERMINAL_FAILED, error="boom", retry_count=3)
+    code, r = service.handle_ingest(c, {"text": "https://x/1", "chat_id": "c2", "sender_id": "s2"})
+    assert "已重新排队" in r
+    t = db.get_task(c, "failed_id")
+    assert (t["status"], t["retry_count"], t["error"], t["chat_id"]) == (db.RECEIVED, 0, None, "c2")
+    # 已排队后再发仍去重
+    code, r = service.handle_ingest(c, {"text": "https://x/1", "chat_id": "c", "sender_id": "s"})
+    assert "已在处理" in r
+    c.close()
+
+
 def test_cleanup_media_removes_video_and_wav(data_dir, monkeypatch):
     monkeypatch.setattr(config, "DATA_DIR", data_dir)
     p = pipeline._paths("vX")

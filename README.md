@@ -78,7 +78,7 @@ tests/       pytest；gold/ 真值集与合成回放 fixture 进仓，`fixtures/
 python3.11 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env   # 填凭据，chmod 600
-pytest -q                                   # 全部单测（当前 283 项）
+pytest -q                                   # 全部单测（当前 284 项）
 python -m core.cli "<抖音分享链接>"          # 手动处理一条（建真值集）
 python -m core.cli --board                  # 打印榜单（纯读，不取写锁）
 python -m core.cli --render                  # 用现有 extract 重渲染 board.md（不重提取）
