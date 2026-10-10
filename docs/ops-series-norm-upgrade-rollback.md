@@ -22,7 +22,7 @@
    tar czf "$BK/extracts.tgz" $(find data -name extract.json -o -name board.md)
    ```
    （等价逻辑见 `ops/upgrade_rollback.py:backup`；评测副本也从这一快照取。）
-3. **git pull**（**必走 HTTP 代理**，直连 pack 卡死，见 CLAUDE.md 生产部署）。
+3. **git pull**（**必走 HTTP 代理**，直连 pack 卡死，见 AGENTS.md 生产部署）。
 4. **释放维护锁**，`launchctl load ...plist`。
 5. **load 之后**跑冒烟：`curl -s 127.0.0.1:8232/healthz`（期 200）+
    `.venv/bin/python -m core.cli --board`（纯读，不取写锁）。
