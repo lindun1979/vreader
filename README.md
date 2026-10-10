@@ -34,8 +34,8 @@ SenseVoiceSmall，生产提取主通道为 agy。当前提交的研发测试全�
   → 渲染 board.md → 飞书回执
 ```
 
-- **下载**：不用 yt-dlp（其 Douyin extractor 漏传参数已失效），直接调 web detail
-  API（匿名 ttwid cookie，无需登录）。见 `core/douyin.py`。
+- **下载**：不用 yt-dlp（其 Douyin extractor 漏传参数已失效），详情走移动端 feed
+  接口（无签名/无需登录；web detail API 2026-10 起需 a_bogus 签名已弃）。见 `core/douyin.py`。
 - **ASR**：Gladia 云转写为主（gold 真值集 97 格 100% vs SenseVoice 89.7%，带
   models.yml 热词，`GLADIA_API_KEY` 配 .env），失败自动回落本地 SenseVoiceSmall
   （funasr, CPU，长视频分块）。`extract.json` 的 `asr_model` 记录实际所用引擎；
@@ -78,7 +78,7 @@ tests/       pytest；gold/ 真值集与合成回放 fixture 进仓，`fixtures/
 python3.11 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env   # 填凭据，chmod 600
-pytest -q                                   # 全部单测（当前 281 项）
+pytest -q                                   # 全部单测（当前 283 项）
 python -m core.cli "<抖音分享链接>"          # 手动处理一条（建真值集）
 python -m core.cli --board                  # 打印榜单（纯读，不取写锁）
 python -m core.cli --render                  # 用现有 extract 重渲染 board.md（不重提取）

@@ -9,7 +9,8 @@
 ## 架构速记
 - 入口：飞书（复用 life-assistant 飞书号，skill_router HMAC 透传到本服务 127.0.0.1:8232）。
 - 管线：解析 aweme_id → 下载 → ffmpeg wav → SenseVoice(分块) → LLM 提取 → 决策 → board.md。
-- 下载：**不用 yt-dlp**（Douyin extractor 漏参已坏），直连 web detail API + 匿名 ttwid。
+- 下载：**不用 yt-dlp**（Douyin extractor 漏参已坏），详情走移动端 feed 接口 `aweme.snssdk.com/aweme/v1/feed/`
+  （按 aweme_id 严格匹配，列表混推荐视频）；web detail API 2026-10 起被 Argus 强制 uifid+a_bogus 签名，已弃。
 - 提取 LLM：生产机 **agy（Antigravity CLI）gemini-3.7-flash-medium 主**（生产链路 gold 97 格
   96/97≈99%；LLM_BACKEND=agy，直连不通须配 AGY_PROXY 代理，见 [[agy-on-prod-via-proxy]]），
   兜底 :8317 cliproxy 的 gemini-3.5-flash-lite（gold 86.6%）；配 LLM_MODEL/LLM_MODEL_FALLBACK。
@@ -73,7 +74,7 @@ reprocess/迁移等 CLI 写操作需 flock，**必须先 `launchctl unload` 停 
 launchd 管理（禁 nohup），登记运维斯 SERVICES.md。
 
 ## 测试
-`pytest -q`（281 项全绿，**只在研发机跑**；生产机不跑 pytest）。手动处理：
+`pytest -q`（283 项全绿，**只在研发机跑**；生产机不跑 pytest）。手动处理：
 `python -m core.cli "<链接>"`；重跑提取：`--reprocess <id>`；强制用 Gladia 重转（修此前落
 兜底 ASR 的数据，删 transcript 走全量管线）：`--retranscribe <id>`。
 校正命令（V-M16，见 `docs/plans/vreader-confirm-correction-command-plan-v8.md`）：

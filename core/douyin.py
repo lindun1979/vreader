@@ -3,6 +3,9 @@
 M0 实测结论（2026-09-04，dev box）：yt-dlp 的 Douyin extractor 请求 web detail
 API 时漏传 device_platform/aid 等参数而失败；直接调 detail API 更稳。全程只需匿名
 ttwid cookie（bytedance ttwid 注册端点获取），无需登录/账号。
+
+2026-10 起 web detail API 被 ArgusSecurityPlugin 全面拦截（403，强制 uifid + a_bogus
+签名），改走移动端 feed 接口（无签名/无 cookie，字段结构同 web detail）。
 """
 from __future__ import annotations
 
@@ -35,10 +38,9 @@ _TTWID_BODY = json.dumps({
     "migrate_info": {"ticket": "", "source": "node"},
     "cbUrlProtocol": "https", "union": True,
 }).encode()
-_DETAIL = "https://www.douyin.com/aweme/v1/web/aweme/detail/"
-_DETAIL_PARAMS = ("device_platform=webapp&aid=6383&channel=channel_pc_web"
-                  "&pc_client_type=1&version_code=170400&version_name=17.4.0"
-                  "&cookie_enabled=true&platform=PC")
+# feed 返回列表：首项通常是目标视频，后面混推荐视频——必须按 aweme_id 严格匹配。
+_FEED = "https://aweme.snssdk.com/aweme/v1/feed/"
+_APP_UA = "com.ss.android.ugc.aweme/310000 (Linux; U; Android 13)"
 
 # 分享文本里可能出现的抖音链接
 _URL_RE = re.compile(r"https?://[^\s，。、）)\]】]+")
@@ -104,27 +106,26 @@ def _aweme_from_url(url: str) -> str | None:
 
 
 def fetch_detail(aweme_id: str, *, attempts: int = 5) -> dict:
-    """调 web detail API，返回 aweme_detail dict。
+    """调移动端 feed 接口，返回目标视频的 aweme dict（结构同 web aweme_detail）。
 
-    detail API 有瞬时频控（403/空返回）：每次失败刷新 ttwid + 退避重试。
+    瞬时失败（网络/空返回/未含目标）退避重试。
     """
     last_err: str = ""
     for attempt in range(attempts):
-        ttwid = _get_ttwid(force=attempt > 0)
-        url = f"{_DETAIL}?aweme_id={aweme_id}&{_DETAIL_PARAMS}"
-        req = urllib.request.Request(url, headers=_headers(ttwid))
+        url = f"{_FEED}?aweme_id={aweme_id}"
+        req = urllib.request.Request(url, headers={"User-Agent": _APP_UA})
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
                 data = json.loads(resp.read())
-            detail = (data or {}).get("aweme_detail")
-            if detail:
-                return detail
-            last_err = "aweme_detail 为空"
+            for item in (data or {}).get("aweme_list") or []:
+                if str(item.get("aweme_id")) == str(aweme_id):
+                    return item
+            last_err = "feed 未返回目标视频"
         except (urllib.error.URLError, json.JSONDecodeError) as e:
             last_err = str(e)
         if attempt < attempts - 1:
             time.sleep(1.5 * (attempt + 1))  # 退避
-    raise DownloadError(f"detail API 失败（{attempts} 次）: {last_err} :: {aweme_id}")
+    raise DownloadError(f"视频详情获取失败（{attempts} 次）: {last_err} :: {aweme_id}")
 
 
 def meta_from_detail(detail: dict) -> dict:
