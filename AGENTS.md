@@ -5,7 +5,7 @@
 详细规划见 `docs/plans/vreader-mvp-plan-v6.md`（经 6 轮对抗评审收敛）。
 
 **状态：已上线生产（launchd `ai.chivox.vreader`，运维斯登记）。** 主转写为 Gladia、失败时回落到
-本地 SenseVoiceSmall，生产提取主通道为 agy。研发测试全量 284 项。
+本地 SenseVoiceSmall，生产提取主通道为 agy。研发测试全量 290 项。
 
 ## 纪律（public 仓，硬禁令）
 
@@ -62,6 +62,8 @@
   若再被封，备选：生产机已装 Playwright chromium，可无头打开视频页截取详情。播放地址下载仍带 ttwid。
 - **ASR**：**Gladia 云转写主**（gold 97 格 100% vs SenseVoice 89.7%，~11s/条，带 models.yml
   热词；`GLADIA_API_KEY` 配 .env，免费 10h/月），失败自动回落本地 SenseVoiceSmall（funasr, CPU）。
+  Gladia 每个请求（上传/建任务/轮询）网络失败先直连重试 3 次、再走 `GLADIA_PROXY` 代理一次
+  （切到代理后粘住），4xx（鉴权/参数）不重试；全挂才回落 SenseVoice。
   SenseVoice 长视频**必须分块**转写（整段喂入峰值 10GB+ 拖垮 16G 机）。`extract.json` 的 `asr_model`
   记录实际所用引擎；单任务回执 + 榜单末尾均会**显式警示**落到兜底 ASR 的视频（名字易糊、结果存疑）。
   （评估过的等价替代：Gemini `gemini-3.5-transcribe-live` 并发流式，gold 92.4%≈Gladia 91.8%、
@@ -125,7 +127,7 @@ launchd 管理（禁 nohup），登记运维斯 SERVICES.md。
 
 ## 开发与测试
 
-`pytest -q`（284 项全绿，**只在研发机跑**；生产机不跑 pytest）。
+`pytest -q`（290 项全绿，**只在研发机跑**；生产机不跑 pytest）。
 
 ```bash
 python3.11 -m venv .venv && . .venv/bin/activate

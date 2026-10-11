@@ -43,6 +43,8 @@ ADMIN_CHAT_ID = get("VREADER_ADMIN_CHAT_ID", "")
 
 # Gladia 云 ASR key（主转写通道；空 = 只用本地 SenseVoice）
 GLADIA_API_KEY = get("GLADIA_API_KEY", "")
+# Gladia 直连重试仍失败时的 HTTP 代理（含口令，仅进 .env）；空 = 只直连
+GLADIA_PROXY = get("GLADIA_PROXY", "")
 
 # 提取 LLM 后端：openai（:8317 cliproxy）| agy（Antigravity CLI 主，openai 兜底）| claude
 LLM_BACKEND = get("LLM_BACKEND", "openai")

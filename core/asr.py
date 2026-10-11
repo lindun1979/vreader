@@ -11,6 +11,7 @@ import json
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
@@ -35,13 +36,35 @@ def model_id() -> str:
 _GLADIA_BASE = "https://api.gladia.io"
 _GLADIA_POLL_S = 5
 _GLADIA_DEADLINE_S = 900
+# 网络重试：office 出网偶发握手/传输卡死（2026-10-11 上传 300s read timeout 直接回落兜底）。
+# 每次请求直连试 _GLADIA_DIRECT_TRIES 次，仍不通且配了 GLADIA_PROXY 再走代理一次；
+# 线路一旦切到后面的（如代理）就粘住。上传超时 90s（4MB 正常 ~14s）。
+_GLADIA_DIRECT_TRIES = 3
+_GLADIA_BACKOFF_S = 5
+_GLADIA_UPLOAD_TIMEOUT_S = 90
+_GLADIA_API_TIMEOUT_S = 60
 
 
 class GladiaError(Exception):
     pass
 
 
-def _gladia_api(url: str, key: str, data: dict | None = None) -> dict:
+def _urlopen(req, timeout: int, proxy: str):
+    if not proxy:
+        return urllib.request.urlopen(req, timeout=timeout)
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+    return opener.open(req, timeout=timeout)
+
+
+def _retryable(e: Exception) -> bool:
+    """4xx（鉴权/额度/参数）重试无用；超时、连接错误、5xx、408/429 才重试。"""
+    if isinstance(e, urllib.error.HTTPError):
+        return e.code >= 500 or e.code in (408, 429)
+    return True
+
+
+def _gladia_api(url: str, key: str, data: dict | None = None, *, proxy: str = "") -> dict:
     headers = {"x-gladia-key": key}
     body = None
     if data is not None:
@@ -49,11 +72,11 @@ def _gladia_api(url: str, key: str, data: dict | None = None) -> dict:
         headers["Content-Type"] = "application/json"
     req = urllib.request.Request(
         url if url.startswith("http") else _GLADIA_BASE + url, data=body, headers=headers)
-    with urllib.request.urlopen(req, timeout=120) as r:
+    with _urlopen(req, _GLADIA_API_TIMEOUT_S, proxy) as r:
         return json.loads(r.read())
 
 
-def _gladia_upload(mp3_path: str, key: str) -> str:
+def _gladia_upload(mp3_path: str, key: str, *, proxy: str = "") -> str:
     boundary = uuid.uuid4().hex
     raw = Path(mp3_path).read_bytes()
     body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"audio\"; "
@@ -62,7 +85,7 @@ def _gladia_upload(mp3_path: str, key: str) -> str:
     req = urllib.request.Request(_GLADIA_BASE + "/v2/upload", data=body, headers={
         "x-gladia-key": key,
         "Content-Type": f"multipart/form-data; boundary={boundary}"})
-    with urllib.request.urlopen(req, timeout=300) as r:
+    with _urlopen(req, _GLADIA_UPLOAD_TIMEOUT_S, proxy) as r:
         return json.loads(r.read())["audio_url"]
 
 
@@ -75,19 +98,36 @@ def _vocabulary() -> list[str]:
 def _transcribe_gladia(video_path: str, key: str) -> str:
     """视频→mp3→上传→pre-recorded→轮询。任何失败抛 GladiaError 由上层兜底。"""
     from . import config
+    routes = [""] * _GLADIA_DIRECT_TRIES + ([config.GLADIA_PROXY] if config.GLADIA_PROXY else [])
+
+    def call(fn, *args):
+        nonlocal routes
+        for i, proxy in enumerate(routes):
+            try:
+                r = fn(*args, proxy=proxy)
+                routes = routes[i:]  # 粘住当前可用线路
+                return r
+            except Exception as e:  # noqa: BLE001
+                if not _retryable(e) or i == len(routes) - 1:
+                    raise
+                nxt = "代理" if routes[i + 1] else "直连"
+                print(f"[asr] Gladia {fn.__name__} 第{i + 1}次失败（{e}），{nxt}重试",
+                      file=sys.stderr, flush=True)
+                time.sleep(_GLADIA_BACKOFF_S)
+
     mp3 = video_path + ".gladia.mp3"
     try:
         subprocess.run(
             [config.FFMPEG_BIN, "-y", "-i", video_path, "-vn", "-ac", "1", "-ar", "16000",
              "-b:a", "64k", mp3],
             check=True, capture_output=True, timeout=config.FFMPEG_TIMEOUT_S)
-        audio_url = _gladia_upload(mp3, key)
+        audio_url = call(_gladia_upload, mp3, key)
     except Exception as e:
         raise GladiaError(f"上传失败: {e}") from e
     finally:
         Path(mp3).unlink(missing_ok=True)
     try:
-        job = _gladia_api("/v2/pre-recorded", key, {
+        job = call(_gladia_api, "/v2/pre-recorded", key, {
             "audio_url": audio_url,
             "language_config": {"languages": ["zh"], "code_switching": False},
             "detect_language": False,
@@ -97,7 +137,7 @@ def _transcribe_gladia(video_path: str, key: str) -> str:
         deadline = time.time() + _GLADIA_DEADLINE_S
         while time.time() < deadline:
             time.sleep(_GLADIA_POLL_S)
-            r = _gladia_api(job["result_url"], key)
+            r = call(_gladia_api, job["result_url"], key)
             if r["status"] == "done":
                 tr = r["result"]["transcription"]
                 lines = [u["text"] for u in tr.get("utterances", [])]

@@ -154,6 +154,12 @@ Gemini:
       aliases: [flash, manflash, manyflash, manf]
   seed_variant_versions: {Flash: ["3.7"]}
 
+Mistral Large:
+  format: "Mistral Large {v}"
+  # 欧洲（法国）Mistral AI；「欧公子」=Mistral（用户 2026-10 确认）。SenseVoice 糊成「4超蜡」不收（太泛）
+  aliases: [mistral large, mistrallarge, mistral, 米斯特拉尔]
+  nicknames: [欧公子]
+
 Grok:
   format: "Grok {v}"
   aliases: [grok, 格洛克, 格罗克, 格鲁克, 格肉科, 格肉]
