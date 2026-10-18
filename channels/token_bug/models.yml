@@ -10,7 +10,8 @@
 #   aliases           系列名糊法（不带版本、不带变体）。锚定：alias + 邻接数字 → 版本锚点。
 #   nicknames         系列级动态昵称（只绑系列，永不携带版本；如「一哥」随期变版本）。
 #   variants          该系列允许的变体清单；每个变体可有 aliases（变体词形）与 nicknames
-#                     （变体级昵称，绑 系列+变体，仍不绑版本）。未在此清单的 variant → UNKNOWN。
+#                     （变体级昵称，绑 系列+变体，仍不绑版本）。未在此清单（也未经人工校正
+#                     登记，V-M17）的 variant → UNKNOWN。校正命令可对已知系列登记新变体，存 DB 不回写本表。
 #   version_map       （可选）原始提及数字 → 归一版本（Opus 4.8/5.0 都归 "5"）。
 #   seed_versions     一次性兼容基线：基础款（无变体）的已知版本，入 known_versions(source=seed)。
 #   seed_variant_versions  变体款的已知版本 {变体名: [版本...]}。

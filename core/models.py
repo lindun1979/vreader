@@ -12,7 +12,9 @@
 """
 from __future__ import annotations
 
+import copy
 import re
+import sqlite3
 from pathlib import Path
 
 import yaml
@@ -49,7 +51,62 @@ def load_series() -> dict:
         data = yaml.safe_load(_MODELS_PATH.read_text(encoding="utf-8")) or {}
         _validate_series(data)
         _CACHE = (mtime, data)
-    return _CACHE[1]
+    learned = _learned_variants(_CACHE[1])
+    if not learned:
+        return _CACHE[1]
+    data = copy.deepcopy(_CACHE[1])
+    for series, variant in learned:
+        data = add_variant(data, series, variant, inplace=True)
+    return data
+
+
+# 人工校正可引入 yml 清单外的新变体（V-M17，用户 2026-10 拍板：人工确认的变体无条件接受）。
+# 唯一来源 = known_versions 表中 variant 不在 yml 该系列 variants 里的值；每次 load_series
+# 开只读短连接合并（表很小），提交即全体消费点可见（prompt/热词/锚定/validate）。
+_NEW_VARIANT_RE = re.compile(r"^[\w.+\-]{1,24}$")
+
+
+def _learned_variants(data: dict) -> list[tuple[str, str]]:
+    """known_versions 里 yml 已有系列下、yml 未声明的变体（忽略大小写比较）。
+    库/表不存在（测试、init 期）→ []。"""
+    dbp = config.DATA_DIR / "vreader.db"
+    if not dbp.exists():
+        return []
+    try:
+        conn = sqlite3.connect(f"file:{dbp}?mode=ro", uri=True, timeout=5.0)
+        try:
+            conn.execute("PRAGMA query_only=ON")
+            rows = conn.execute(
+                "SELECT DISTINCT series, variant FROM known_versions WHERE variant != ''"
+                " ORDER BY created_at, series, variant").fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return []
+    out = []
+    for series, variant in rows:
+        cfg = data.get(series)
+        if cfg is None:
+            continue
+        if variant.lower() in {v.lower() for v in _series_variants(cfg)}:
+            continue
+        if variant.lower() in {v.lower() for s, v in out if s == series}:
+            continue
+        out.append((series, variant))
+    return out
+
+
+def add_variant(data: dict, series: str, variant: str, *, inplace: bool = False) -> dict:
+    """在系列表上加一个（人工确认的）变体；变体名本身（≥3 字符）作别名，此后口播即可锚定。
+    默认返回深拷贝，不动入参。名字非法 → ConfigError。"""
+    if not _NEW_VARIANT_RE.match(variant or ""):
+        raise ConfigError(f"变体名不合法（1–24 个字母/数字/._+-，不含空格）: {variant!r}")
+    out = data if inplace else copy.deepcopy(data)
+    cfg = out[series]
+    aliases = [variant.lower()] if len(variant) >= 3 else []
+    cfg["variants"] = dict(cfg.get("variants") or {})
+    cfg["variants"][variant] = {"aliases": aliases}
+    return out
 
 
 def _validate_series(data: dict) -> None:
@@ -438,17 +495,23 @@ def _canon_variant_name(cfg: dict, variant: str) -> str:
 
 
 def normalize_triple(series: str, version: str, variant: str = "",
-                     *, data: dict | None = None) -> tuple[str, str, str, str]:
+                     *, data: dict | None = None,
+                     allow_new_variant: bool = False) -> tuple[str, str, str, str]:
     """人工指定的 (series, version, variant) → (canonical, series, stored_version, variant)。
     **不做锚定**（人工即权威），只做 compose_canonical（round-trip 撞名校验）+ version_map 归一，
     与 resolve_record 末尾同款；stored_version 与 known_versions 三元组一致。供校正命令/登记/测试共用。
     系列/变体名对用户输入宽容：精确→忽略大小写→别名（如 `preview`/`预览版`→`Preview`、
-    `deepseek`→`DeepSeek`）。非法系列/变体/空版本/撞名 → 抛 ConfigError（调用方转用户可见回执）。"""
+    `deepseek`→`DeepSeek`）。非法系列/变体/空版本/撞名 → 抛 ConfigError（调用方转用户可见回执）。
+    allow_new_variant（校正命令用）：已知系列下清单外的变体按输入原样接受（人工即权威），
+    在临时系列表上拼合校验；调用方须同事务登记 known_version 使其持久生效。"""
     data = data if data is not None else load_series()
     series = _canon_series_name(data, series)
     cfg = data.get(series)
     if cfg is not None:
         variant = _canon_variant_name(cfg, variant)
+        if allow_new_variant and variant and variant not in _series_variants(cfg):
+            data = add_variant(data, series, variant.strip())
+            variant = variant.strip()
     canonical = compose_canonical(series, version, variant, data=data)  # 校验 + round-trip
     stored_version = _apply_version_map(series, norm_version(version), data)
     return canonical, series, stored_version, (variant or "")

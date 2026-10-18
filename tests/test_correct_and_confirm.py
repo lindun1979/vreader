@@ -188,13 +188,14 @@ def test_invalid_series_rejected_no_side_effect(conn):
     assert db.list_all_corrections(conn) == []
 
 
-def test_unknown_variant_rejected(conn):
+def test_invalid_variant_name_rejected(conn):
+    # V-M17 起已知系列下的新变体无条件接受（见 test_learned_variant.py）；非法名仍拒
     aid = "vbadv"
     ex = _v2ex(aid, [_rec("UNKNOWN", "", "", "")])
     _write(aid, ex)
     ex_mod.apply_decisions(conn, aid, ex, known=db.list_known_versions(conn))
     old_rid = ex_mod.record_id(aid, ex["records"][0])
-    ok, msg = ex_mod.correct_and_confirm(conn, aid, _corr(old_rid, "DeepSeek", "4.1", "Nope"), "admin")
+    ok, msg = ex_mod.correct_and_confirm(conn, aid, _corr(old_rid, "DeepSeek", "4.1", "No pe"), "admin")
     assert not ok and "无法归一" in msg
 
 

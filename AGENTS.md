@@ -5,7 +5,7 @@
 详细规划见 `docs/plans/vreader-mvp-plan-v6.md`（经 6 轮对抗评审收敛）。
 
 **状态：已上线生产（launchd `ai.chivox.vreader`，运维斯登记）。** 主转写为 Gladia、失败时回落到
-本地 SenseVoiceSmall，生产提取主通道为 agy。研发测试全量 290 项。
+本地 SenseVoiceSmall，生产提取主通道为 agy。研发测试全量 300 项。
 
 ## 纪律（public 仓，硬禁令）
 
@@ -117,6 +117,11 @@ pending_new_version 记录人工指定三元组，一步「改 extract 四字段
 `needs_review`，人工 CLI 解决：`--list-corrections`（只读 `db.connect_ro`）查看，
 `--resolve-correction <op_id> <keep-file|apply-journal>`（停 serve、取 flock）二选一。
 `keep-file` 保留全局版本登记、仅回退产物。含空格系列名（Claude Opus 等）不支持，走手改。
+**新变体无条件接受**（V-M17，用户 2026-10 定：人工标定优先于清单）：已知系列下 models.yml 未声明的变体
+（如 `gemini/4/Argon`）原样接受（首次输入定大小写，此后忽略大小写复用），同事务登记进 `known_versions`；
+`models.load_series()` 每次合并「known_versions 中 yml 外的变体」（只读短连接），变体名本身作别名
+→ 此后自动锚定/归一，prompt/热词/读回校验同步可见。**未知系列仍拒**（须改 models.yml 定 format）；
+自动提取/批量确认不会引入新变体。删学到变体的最后一条 known_versions 行会让引用它的 extract 判坏，见回滚手册。
 
 ## 生产部署
 见 `DEPLOY.local.md`（gitignore）。生产解释器=`~/workspace/vreader/.venv/bin/python`
@@ -127,7 +132,7 @@ launchd 管理（禁 nohup），登记运维斯 SERVICES.md。
 
 ## 开发与测试
 
-`pytest -q`（290 项全绿，**只在研发机跑**；生产机不跑 pytest）。
+`pytest -q`（300 项全绿，**只在研发机跑**；生产机不跑 pytest）。
 
 ```bash
 python3.11 -m venv .venv && . .venv/bin/activate
@@ -171,3 +176,5 @@ tests/       pytest；gold/ 真值集与合成回放 fixture 进仓，`fixtures/
   `Signature Not Found`），10-07~10-10 间生效；`fetch_detail` 改走移动端 feed 接口（严格 id 匹配）。
   同时修 ingest 去重：terminal_failed 任务重发即重新排队（此前任何已存在 id 都拒收，与失败通知
   「可重新发链接重试」矛盾）。生产已部署，用户重发失败视频端到端成功。
+- **2026-10-18 新变体无条件接受（V-M17）**：`vr确认 … =gemini/4/Argon` 被「系列 Gemini 无变体 Argon」
+  拒（以往每遇新变体都要改 yml+部署）。改为人工校正可登记新变体，存 known_versions、load_series 合并。

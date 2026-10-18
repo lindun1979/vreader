@@ -61,6 +61,9 @@
   DELETE FROM known_versions WHERE series='GLM' AND version='5.4' AND variant='';
   ```
   `apply_decisions` 恒存继承先于分类（`core/extract.py`），reprocess 后同 rid 仍 APPROVED。
+- ⚠️ **人工校正学到的变体**（V-M17：yml 未声明、仅靠 known_versions 存在，如 `Gemini/4/Argon`）：
+  删掉该变体的**最后一条** known_versions 行，变体即从系列表消失，引用它的 extract.json 读回校验
+  失败 → 改名 `.bad` 重提取。撤销前先把相关记录校正成别的三元组，或先把该变体写进 models.yml。
 - **确需撤销既有批准**（显式，分开成节）：
   1. 按 extract.json 三元组字段列出受影响 rid（查询模板）：
      grep 各视频 `extract.json` 中 `model_series/version/variant` 命中该三元组的记录，

@@ -375,13 +375,14 @@ def _evidence_in_transcript(quote: str, norm_tx: str) -> bool:
 
 
 def validate_extract(extract: dict, *, transcript: str | None = None,
-                     expected_video_id: str | None = None) -> None:
+                     expected_video_id: str | None = None, data: dict | None = None) -> None:
     """统一产物校验入口（C3/M06 双轨）：读回缓存/reprocess 前必过，否则视为不可信。
     判轨单位是**整个文件**（envelope 定轨，M13）：
     - 有 schema_rev → **只接受 2**（未知修订一律拒），按 v2 全套校验（每条须带 series
       三字段且 compose(series,version,variant)==canonical，或 UNKNOWN 三字段空）。
     - 无 schema_rev（旧产物）→ canonical 必须 ∈ 冻结 LEGACY_CANONICALS ∪ {UNKNOWN}。
     公共：video_id 匹配 + 逐记录 schema + derive 一致 + evidence 归一非空(≥4)且子串。
+    data：系列表覆盖（仅校正命令提交前预校验新变体用）；None=load_series()。
     失败抛 ExtractError。"""
     rev = extract.get("schema_rev")
     if rev is not None and rev != SCHEMA_REV:
@@ -394,7 +395,7 @@ def validate_extract(extract: dict, *, transcript: str | None = None,
         raise ExtractError(f"envelope schema: {errs[0].message}")
     if expected_video_id is not None and extract.get("video_id") != expected_video_id:
         raise ExtractError(f"video_id 不匹配: {extract.get('video_id')} != {expected_video_id}")
-    data = models_mod.load_series() if v2 else None
+    data = (data if data is not None else models_mod.load_series()) if v2 else None
     norm_tx = _normalize_quote(transcript) if transcript is not None else None
     for r in extract["records"]:
         rerrs = sorted(rec_validator.iter_errors(r), key=lambda e: list(e.path))
@@ -901,12 +902,17 @@ def correct_and_confirm(conn, aweme_id: str, correction, approver: str) -> tuple
     if len(matches) > 1:
         return False, f"{correction.rid} 前缀不唯一，请多给几位。"
     old_rid = matches[0]
-    # 归一三元组（人工即权威，不锚定）
+    # 归一三元组（人工即权威，不锚定；已知系列下的新变体无条件接受，V-M17）
+    data = models_mod.load_series()
     try:
         canonical, series, stored_version, variant = models_mod.normalize_triple(
-            correction.series, correction.version, correction.variant)
+            correction.series, correction.version, correction.variant,
+            data=data, allow_new_variant=True)
     except models_mod.ConfigError as e:
         return False, f"模型名无法归一：{e}"
+    new_variant = bool(variant) and variant not in models_mod._series_variants(data[series])
+    if new_variant:  # 尚未入库：用临时系列表预校验，提交登记后 load_series 自然可见
+        data = models_mod.add_variant(data, series, variant)
     # 状态门禁
     d = db.get_decision(conn, old_rid)
     if d is None or d["decision"] not in (db.PENDING, db.PENDING_UNKNOWN, db.PENDING_NEW_VERSION):
@@ -937,7 +943,7 @@ def correct_and_confirm(conn, aweme_id: str, correction, approver: str) -> tuple
     # 校验前置（有 transcript 则传，含 evidence 子串校验）
     try:
         validate_extract(corrected_ex, transcript=_transcript_text(aweme_id),
-                         expected_video_id=aweme_id)
+                         expected_video_id=aweme_id, data=data)
     except ExtractError as e:
         return False, f"校正后产物校验失败：{e}"
     # 精确字节（步骤 6 写入同一串，保证下次恢复 CAS 命中 target_sha）
@@ -990,7 +996,8 @@ def correct_and_confirm(conn, aweme_id: str, correction, approver: str) -> tuple
     db.mark_op_status(conn, op_id, db.CORR_DONE, resolved_at=time.time(), commit=True)
     tri = f"{series}/{stored_version}" + (f"/{variant}" if variant else "")
     return True, (f"已校正 [{old_rid[:8]}]→[{new_rid[:8]}]：{canonical}"
-                  f"（三元组 {tri}），已登记版本并确认上榜。")
+                  f"（三元组 {tri}），已登记版本并确认上榜。"
+                  + (f"\n新变体 {series} {variant} 已登记，此后自动识别。" if new_variant else ""))
 
 
 def resolve_correction(conn, op_id: str, mode: str) -> tuple[bool, str]:
