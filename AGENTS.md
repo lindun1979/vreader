@@ -130,6 +130,24 @@ git 仓部署：`git pull`（**必走 HTTP 代理**，直连 pack 卡死）→ `
 `bash ops/prod.sh health`。reprocess/迁移等 CLI 写操作需 flock，**必须先 `launchctl unload` 停 serve** 再跑。
 launchd 管理（禁 nohup），登记运维斯 SERVICES.md。
 
+## 服务拓扑
+<!-- topology:v1 -->
+- 产物形态：服务
+- 用户界面：飞书（复用 life-assistant 飞书号，skill_router 命中抖音链接 / `vr` 前缀命令后 HMAC 透传）
+- 部署宿主：office（重内存 ASR 兜底与 agy 登录态都在生产机；研发机不部署）
+
+| 提供 ref | 进程管理 | 健康端点 |
+|---|---|---|
+| office:vreader | launchd | http://127.0.0.1:8232/healthz（POST，不健康 503） |
+
+| 提供 ref | 依赖 ref | 硬/软 | 挂了的表现 |
+|---|---|---|---|
+| office:vreader | remote:douyin-feed-api | 硬 | 取不到视频详情，新链接全部处理失败 |
+| office:vreader | remote:feishu-open-api | 硬 | 回执/榜单发不出，outbox 积压超 1h 后 healthz 503 |
+| office:vreader | remote:gladia-api | 软 | 回落本地 SenseVoice：变慢、模型名易糊（回执与榜单显式警示） |
+| office:vreader | remote:singreality-proxy | 软 | agy 提取与 Gladia 代理兜底失效，提取回落 cliproxy |
+| office:vreader | office:cliproxy-api | 软 | agy 正常时无感；agy 也挂则提取失败 |
+
 ## 开发与测试
 
 `pytest -q`（300 项全绿，**只在研发机跑**；生产机不跑 pytest）。
