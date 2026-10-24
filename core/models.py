@@ -133,6 +133,25 @@ def _apply_version_map(series: str, version: str, data: dict) -> str:
     return vm.get(version, version)
 
 
+def _dot0_twin(version: str) -> str | None:
+    """只在整数版本与其单个 .0 写法之间切换；其余版本保持独立。"""
+    if re.fullmatch(r"\d+", version):
+        return version + ".0"
+    if re.fullmatch(r"\d+\.0", version):
+        return version[:-2]
+    return None
+
+
+def known_spelling(known: set | None, series: str, version: str, variant: str) -> str:
+    """精确登记优先；仅在精确缺失时采用同系列、同变体的 .0 孪生写法。"""
+    if known and (series, version, variant) in known:
+        return version
+    twin = _dot0_twin(version)
+    if twin and known and (series, twin, variant) in known:
+        return twin
+    return version
+
+
 # ---------- 反解器（round-trip 撞名校验）----------
 
 _VER_RE = r"\d+(?:\.\d+)*"
@@ -340,7 +359,7 @@ def _known_has(known: set | None, series: str, version_raw: str, variant: str,
     if not known:
         return False
     mv = _apply_version_map(series, norm_version(version_raw), data)
-    return (series, mv, variant) in known
+    return (series, known_spelling(known, series, mv, variant), variant) in known
 
 
 def _unique_known_variant(known: set | None, series: str, version_raw: str,
@@ -349,7 +368,9 @@ def _unique_known_variant(known: set | None, series: str, version_raw: str,
     if not known:
         return None
     mv = _apply_version_map(series, norm_version(version_raw), data)
-    variants = {var for (s, v, var) in known if s == series and v == mv}
+    exact = {var for (s, v, var) in known if s == series and v == mv}
+    twin = _dot0_twin(mv)
+    variants = exact or {var for (s, v, var) in known if twin and s == series and v == twin}
     return next(iter(variants)) if len(variants) == 1 else None
 
 
@@ -452,12 +473,13 @@ def resolve_record(model_raw: str, model_series: str, model_version: str,
         if alt is not None:
             variant = alt
 
-    # 步骤6：拼合（round-trip 撞名校验）+ version_map 归一
+    # 步骤6：口播组合已过总闸；持久身份优先沿用已登记的版本写法。
+    stored_version = _apply_version_map(series, norm_version(version), data)
+    stored_version = known_spelling(known, series, stored_version, variant)
     try:
-        canonical = compose_canonical(series, version, variant, data=data)
+        canonical = compose_canonical(series, stored_version, variant, data=data)
     except ConfigError:
         return UNK
-    stored_version = _apply_version_map(series, norm_version(version), data)
     return canonical, series, stored_version, variant
 
 
@@ -496,7 +518,8 @@ def _canon_variant_name(cfg: dict, variant: str) -> str:
 
 def normalize_triple(series: str, version: str, variant: str = "",
                      *, data: dict | None = None,
-                     allow_new_variant: bool = False) -> tuple[str, str, str, str]:
+                     allow_new_variant: bool = False,
+                     known: set | None = None) -> tuple[str, str, str, str]:
     """人工指定的 (series, version, variant) → (canonical, series, stored_version, variant)。
     **不做锚定**（人工即权威），只做 compose_canonical（round-trip 撞名校验）+ version_map 归一，
     与 resolve_record 末尾同款；stored_version 与 known_versions 三元组一致。供校正命令/登记/测试共用。
@@ -512,6 +535,7 @@ def normalize_triple(series: str, version: str, variant: str = "",
         if allow_new_variant and variant and variant not in _series_variants(cfg):
             data = add_variant(data, series, variant.strip())
             variant = variant.strip()
-    canonical = compose_canonical(series, version, variant, data=data)  # 校验 + round-trip
     stored_version = _apply_version_map(series, norm_version(version), data)
+    stored_version = known_spelling(known, series, stored_version, variant or "")
+    canonical = compose_canonical(series, stored_version, variant, data=data)  # 校验 + round-trip
     return canonical, series, stored_version, (variant or "")

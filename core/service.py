@@ -191,14 +191,23 @@ def handle_confirm(conn, payload: dict) -> tuple[int, str]:
                 return 200, f"内容已更新（当前版本 {cur}，你确认的是 {want}）。请先 vr明细 {video_id} 重新查看。"
         # 批量确认 + 新版本同事务登记（M04）
         n, registered = ex_mod.approve_pending_for_video(conn, video_id, sender_id)
+        blocked = ex_mod.twin_blocked_pending(conn, video_id)
         if n:
             pipeline.render_board(conn)
-    if not n:
+    if not n and not blocked:
         return 200, f"没有可批量确认的待确认记录（{video_id}）。冲突/未知项需 vr明细 后逐条确认。"
-    msg = f"已确认 {n} 条待确认记录入榜（{video_id}）。"
+    msg = f"已确认 {n} 条待确认记录入榜（{video_id}）。" if n else ""
     if registered:
         uniq = sorted(set(registered))
         msg += f"\n已登记新版本：{', '.join(uniq)}（此后这些版本不再因新版本待确认）"
+    if blocked:
+        from . import models as models_mod
+        data = models_mod.load_series()
+        for rid, current, registered_canonical in blocked:
+            series, version, variant = models_mod._reverse_parse_all(registered_canonical, data)[0]
+            triple = "/".join((series, version, variant)) if variant else f"{series}/{version}"
+            msg += (f"\n⚠️ 记录 {rid[:8]} 的 {current} 与已登记 {registered_canonical} 重复，未确认；"
+                    f"请用 `vr确认 {video_id} {rid[:8]}={triple}` 校正")
     return 200, msg
 
 

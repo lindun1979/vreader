@@ -700,10 +700,41 @@ def _maybe_register(conn, r: dict, approver: str) -> str | None:
     tri = _record_triple(r)
     if not tri or r.get("model_canonical") == "UNKNOWN" or not (tri[0] and tri[1]):
         return None
-    if tri in db.list_known_versions(conn):
+    known = db.list_known_versions(conn)
+    if models_mod.known_spelling(known, *tri) != tri[1]:
+        return None
+    if tri in known:
         return None
     db.register_known_version(conn, tri[0], tri[1], tri[2], approver, commit=False)
     return r["model_canonical"]
+
+
+def twin_blocked_pending(conn, aweme_id: str) -> list[tuple[str, str, str]]:
+    """列出旧产物中因已登记 .0 孪生版本而不能批量确认的新版本记录。"""
+    p = _paths_extract(aweme_id)
+    if p is None:
+        return []
+    try:
+        ex = json.loads(Path(p).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    by_rid, _ = _dedup_records(aweme_id, ex.get("records", []))
+    known = db.list_known_versions(conn)
+    out = []
+    for rid, r in by_rid.items():
+        d = db.get_decision(conn, rid)
+        tri = _record_triple(r)
+        if not d or d["decision"] != db.PENDING_NEW_VERSION or not tri:
+            continue
+        stored = models_mod.known_spelling(known, *tri)
+        if stored == tri[1]:
+            continue
+        try:
+            registered = models_mod.compose_canonical(tri[0], stored, tri[2])
+        except models_mod.ConfigError:
+            continue
+        out.append((rid, r["model_canonical"], registered))
+    return out
 
 
 def approve_pending_for_video(conn, aweme_id: str, approver: str) -> tuple[int, list[str]]:
@@ -723,12 +754,16 @@ def approve_pending_for_video(conn, aweme_id: str, approver: str) -> tuple[int, 
     now = time.time()
     approved = 0
     registered: list[str] = []
+    known = db.list_known_versions(conn)
     try:
         for rid, r in by_rid.items():
             d = db.get_decision(conn, rid)
             if not d or d["decision"] not in (db.PENDING, db.PENDING_NEW_VERSION):
                 continue
             was_new = d["decision"] == db.PENDING_NEW_VERSION
+            tri = _record_triple(r)
+            if was_new and tri and models_mod.known_spelling(known, *tri) != tri[1]:
+                continue
             db.upsert_decision(conn, record_id=rid, aweme_id=aweme_id, decision=db.APPROVED,
                                extractor_version=ev, prompt_hash=ph,
                                approved_by=approver, approved_at=now, commit=False)
@@ -737,6 +772,7 @@ def approve_pending_for_video(conn, aweme_id: str, approver: str) -> tuple[int, 
                 reg = _maybe_register(conn, r, approver)
                 if reg:
                     registered.append(reg)
+                    known.add(tri)
         conn.commit()
     except Exception:
         conn.rollback()
@@ -907,7 +943,7 @@ def correct_and_confirm(conn, aweme_id: str, correction, approver: str) -> tuple
     try:
         canonical, series, stored_version, variant = models_mod.normalize_triple(
             correction.series, correction.version, correction.variant,
-            data=data, allow_new_variant=True)
+            data=data, allow_new_variant=True, known=db.list_known_versions(conn))
     except models_mod.ConfigError as e:
         return False, f"模型名无法归一：{e}"
     new_variant = bool(variant) and variant not in models_mod._series_variants(data[series])
