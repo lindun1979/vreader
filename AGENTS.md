@@ -196,3 +196,7 @@ tests/       pytest；gold/ 真值集与合成回放 fixture 进仓，`fixtures/
   「可重新发链接重试」矛盾）。生产已部署，用户重发失败视频端到端成功。
 - **2026-10-18 新变体无条件接受（V-M17）**：`vr确认 … =gemini/4/Argon` 被「系列 Gemini 无变体 Argon」
   拒（以往每遇新变体都要改 yml+部署）。改为人工校正可登记新变体，存 known_versions、load_series 合并。
+- **2026-10-24 进行中：版本 `.0` 孪生重名 + 证据错字漏提**：`Step 5 Preview` 与 `Step 5.0 Preview`
+  （以及 `Hunyuan 4`/`4.0 Preview`）在榜单上重复——`norm_version` 不去 `.0`，批量确认又登记了孪生写法；
+  另有记录因 LLM 证据抄错一个字被丢弃。规划已评审定稿（研发机本地 `docs/plans/version-dot0-evidence-fuzzy-plan-v5.md`，
+  该目录 gitignore），待实施：孪生写法按已登记写法归一 + 单段证据近似找回（强制人工复核）+ 生产外科修复两个视频。
