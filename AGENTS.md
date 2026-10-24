@@ -5,7 +5,7 @@
 详细规划见 `docs/plans/vreader-mvp-plan-v6.md`（经 6 轮对抗评审收敛）。
 
 **状态：已上线生产（launchd `ai.chivox.vreader`，运维斯登记）。** 主转写为 Gladia、失败时回落到
-本地 SenseVoiceSmall，生产提取主通道为 agy。研发测试全量 300 项。
+本地 SenseVoiceSmall，生产提取主通道为 agy。研发测试全量 335 项。
 
 ## 纪律（public 仓，硬禁令）
 
@@ -27,7 +27,14 @@
   **分段证据**（省略号分隔的有序多段原文，每段 ≥8 字、段间隔 ≤800 归一化字符）兜底接受但
   **强制人工复核**（confidence 封顶 0.6，不 auto_ok）；prompt 仍要求连续摘录。某等级本视频只有
   一个 bug_id 时空 bug_id 回填（让同格 attempt_key 对齐 → 矛盾组走 pending_conflict，不自动裁决）。
-  回执带丢弃原因聚合 + 名单×bug 疑似漏格告警（只告警，不改决策；见 `pipeline._receipt_warnings`）。
+  **单段证据近似找回**（WP-B）：精确与分段都失败时，单段且归一化 ≥20 字的证据用编辑距离找回，
+  编辑数 1..min(3, L//20) 且最优命中唯一（多处不重叠等距命中 → 丢弃）；quote 改写为**原始转写连续切片**，
+  LLM 原文留 envelope `evidence_repaired`，confidence 封顶 0.6 强制复核。多段证据不做近似。
+  回执带丢弃原因聚合 + 证据错字修正计数 + 名单×bug 疑似漏格告警（只告警，不改决策；见 `pipeline._receipt_warnings`）。
+- **`.0` 孪生写法按已登记写法归一**（WP-A）：`norm_version` 仍不去 `.0`（3.0≠3 的全局语义不改），
+  但 `models.known_spelling` 在精确写法未登记、而其孪生（`5`↔`5.0`，仅整数与单个 `.0`）已登记时沿用已登记写法
+  （提取 `resolve_record` / 校正 `normalize_triple` 两入口）；两写法都已登记按精确写法。批量确认拒绝
+  「孪生已登记的 pending_new_version」（不批准不登记，回执逐条给 `=系列/版本/变体` 校正命令，`twin_blocked_pending`）。
 - 单实例执行权：数据目录 flock（serve 最先取），CLI 写路径同锁，`--board` 纯读不取锁。
 - 执行边界：外网/重型阶段带 subprocess timeout + 下载字节/时限硬限 + 任务总预算；
   健康 healthz 三态判定，不健康返 503（线程死/outbox 积压/db 连错/低磁盘/ASR 卡死）。
@@ -150,7 +157,7 @@ launchd 管理（禁 nohup），登记运维斯 SERVICES.md。
 
 ## 开发与测试
 
-`pytest -q`（300 项全绿，**只在研发机跑**；生产机不跑 pytest）。
+`pytest -q`（335 项全绿，**只在研发机跑**；生产机不跑 pytest）。
 
 ```bash
 python3.11 -m venv .venv && . .venv/bin/activate
@@ -196,7 +203,10 @@ tests/       pytest；gold/ 真值集与合成回放 fixture 进仓，`fixtures/
   「可重新发链接重试」矛盾）。生产已部署，用户重发失败视频端到端成功。
 - **2026-10-18 新变体无条件接受（V-M17）**：`vr确认 … =gemini/4/Argon` 被「系列 Gemini 无变体 Argon」
   拒（以往每遇新变体都要改 yml+部署）。改为人工校正可登记新变体，存 known_versions、load_series 合并。
-- **2026-10-24 进行中：版本 `.0` 孪生重名 + 证据错字漏提**：`Step 5 Preview` 与 `Step 5.0 Preview`
+- **2026-10-24 版本 `.0` 孪生重名 + 证据错字漏提**：`Step 5 Preview` 与 `Step 5.0 Preview`
   （以及 `Hunyuan 4`/`4.0 Preview`）在榜单上重复——`norm_version` 不去 `.0`，批量确认又登记了孪生写法；
   另有记录因 LLM 证据抄错一个字被丢弃。规划已评审定稿（研发机本地 `docs/plans/version-dot0-evidence-fuzzy-plan-v5.md`，
-  该目录 gitignore），待实施：孪生写法按已登记写法归一 + 单段证据近似找回（强制人工复核）+ 生产外科修复两个视频。
+  该目录 gitignore）。已实施：WP-A 孪生写法按已登记写法归一（见不变量）；WP-B 单段证据近似找回（强制人工复核；
+  回放 fixture 7689 因此多找回 1 条「这这/这这这」并转 pending_conflict，私有 expect 已同步）。
+  生产外科修复两个视频（7699 Step 5→5.0 两条 + 补回白银 S001；7694 混元 4→4.0 三条）并撤销
+  `Step|5|Preview`、`Hunyuan|4|Preview` 两条孪生登记。
