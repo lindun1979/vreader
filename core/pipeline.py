@@ -168,6 +168,8 @@ def _receipt_warnings(ex: dict, title_series: set[str]) -> list[str]:
     if ex.get("dropped_count", 0) > 0:
         agg = "、".join(f"{k} {n} 条" for k, n in sorted(reasons.items(), key=lambda x: (-x[1], x[0])))
         out.append(f"丢弃 {ex['dropped_count']} 条：{agg}" if agg else f"丢弃 {ex['dropped_count']} 条")
+    if ex.get("evidence_repaired"):
+        out.append(f"证据错字修正 {len(ex['evidence_repaired'])} 条（已降为人工复核，见 vr明细）")
     n_unknown = sum(1 for r in recs if r.get("model_canonical") == "UNKNOWN")
     if n_unknown:
         out.append(f"未识别模型 {n_unknown} 条")

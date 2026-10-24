@@ -462,6 +462,54 @@ def load_valid_extract(extract_path: str, *, transcript: str | None = None,
         return None
 
 
+def _fuzzy_evidence_span(quote: str, transcript: str) -> tuple[str, int] | None:
+    """Find one near matching original transcript span for a single evidence segment.
+
+    Sellers DP allows the match to start anywhere. Each cell carries the smallest
+    and largest start of its cheapest paths, enough to detect disjoint best spans.
+    """
+    segments = _evidence_segments(quote)
+    if len(segments) != 1 or len(segments[0]) < 20:
+        return None
+    needle = segments[0]
+    limit = min(3, len(needle) // 20)
+    idx_map = [i for i, char in enumerate(transcript) if not char.isspace()]
+    norm_tx = "".join(transcript[i] for i in idx_map)
+    if not norm_tx:
+        return None
+
+    # (distance, earliest start, latest start) for each needle prefix.
+    prev = [(i, 0, 0) for i in range(len(needle) + 1)]
+    best = limit + 1
+    first_start = last_start = first_end = last_end = 0
+    for end, char in enumerate(norm_tx, 1):
+        curr = [(0, end, end)]
+        for i, wanted in enumerate(needle, 1):
+            deletion = curr[i - 1][0] + 1
+            insertion = prev[i][0] + 1
+            substitution = prev[i - 1][0] + (wanted != char)
+            distance = min(deletion, insertion, substitution)
+            tied = [cell for cost, cell in (
+                (deletion, curr[i - 1]), (insertion, prev[i]),
+                (substitution, prev[i - 1])) if cost == distance]
+            curr.append((distance, min(cell[1] for cell in tied),
+                         max(cell[2] for cell in tied)))
+        distance, earliest, latest = curr[-1]
+        if distance < best:
+            best = distance
+            first_start, last_start = earliest, latest
+            first_end = last_end = end
+        elif distance == best:
+            first_start = min(first_start, earliest)
+            last_start = max(last_start, latest)
+            first_end = min(first_end, end)
+            last_end = end
+        prev = curr
+    if best == 0 or best > limit or last_start >= first_end:  # 0：仅差省略号等非文字，维持丢弃
+        return None
+    return transcript[idx_map[first_start]:idx_map[last_end - 1] + 1], best
+
+
 def build_extract(*, aweme_id: str, title: str, transcript: str,
                   claude_text: str | None = None, asr_model: str | None = None,
                   known: set[tuple[str, str, str]] | None = None) -> dict:
@@ -479,7 +527,7 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
     raw_records = _parse_records_json(claude_text)
 
     norm_tx = _normalize_quote(transcript)
-    records, dropped = [], []
+    records, dropped, evidence_repaired = [], [], []
     for r in raw_records:
         r = dict(r)
         # 提及锚定解析（LLM 的 raw/series/version/variant 不可信，须过源文本锚定）
@@ -505,10 +553,21 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
             dropped.append({"record": r, "reason": rerrs[0].message})
             continue
         # 证据必须是转写原文（归一化后子串；或省略号分隔的有序多段）
-        if not _evidence_in_transcript(r.get("evidence_quote", ""), norm_tx):
-            dropped.append({"record": r, "reason": "evidence 非转写子串"})
-            continue
-        if len(_evidence_segments(r.get("evidence_quote", ""))) > 1:
+        original_quote = r.get("evidence_quote", "")
+        if not _evidence_in_transcript(original_quote, norm_tx):
+            repaired = _fuzzy_evidence_span(original_quote, transcript)
+            if repaired is None:
+                dropped.append({"record": r, "reason": "evidence 非转写子串"})
+                continue
+            matched_quote, edits = repaired
+            if not _evidence_in_transcript(matched_quote, norm_tx):
+                dropped.append({"record": r, "reason": "evidence 非转写子串"})
+                continue
+            r["evidence_quote"] = matched_quote
+            r["confidence"] = min(r["confidence"], SEGMENTED_CONFIDENCE_CAP)
+            evidence_repaired.append({"original_quote": original_quote,
+                                      "matched_quote": matched_quote, "edits": edits})
+        elif len(_evidence_segments(original_quote)) > 1:
             # 分段证据只证明每段是原文、证明不了拼起来支持结论 → 强制人工复核
             r["confidence"] = min(r.get("confidence", 0), SEGMENTED_CONFIDENCE_CAP)
         records.append(r)
@@ -531,6 +590,7 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
         "records": records,
         "dropped_count": len(dropped),
         "dropped": dropped,
+        "evidence_repaired": evidence_repaired,
     }
     extract["result_rev"] = result_rev(aweme_id, records)
     # 空 records 不再当失败重试（agy M-02/cf5#11）：显式 no_content 终态成功。

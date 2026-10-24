@@ -36,6 +36,19 @@
         "properties": {"reason": {"type": "string"}, "record": {}}
       }
     },
+    "evidence_repaired": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["original_quote", "matched_quote", "edits"],
+        "properties": {
+          "original_quote": {"type": "string", "minLength": 1},
+          "matched_quote": {"type": "string", "minLength": 1},
+          "edits": {"type": "integer", "minimum": 1, "maximum": 3}
+        }
+      }
+    },
     "extracted_at": {"type": "string", "minLength": 1},
     "extractor_version": {"type": "string", "minLength": 1},
     "prompt_hash": {"type": "string", "minLength": 1},
