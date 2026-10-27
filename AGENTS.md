@@ -210,3 +210,7 @@ tests/       pytest；gold/ 真值集与合成回放 fixture 进仓，`fixtures/
   回放 fixture 7689 因此多找回 1 条「这这/这这这」并转 pending_conflict，私有 expect 已同步）。
   生产外科修复两个视频（7699 Step 5→5.0 两条 + 补回白银 S001；7694 混元 4→4.0 三条）并撤销
   `Step|5|Preview`、`Hunyuan|4|Preview` 两条孪生登记。
+- **2026-10-27 `vr帮助` 补「系列名怎么写」**：校正命令最常见的坑是系列名照抄榜面（带版本字母/空格），
+  如 `Kimi K3.1 Pro` 应写 `=Kimi/3.1/Pro`（`K` 是 models.yml 的 version_letter）；写错时消息在**路由层**
+  就被判成普通聊天、静默回生活助手菜单（`_CONFIRM` 参数正则不允许空格，上下游两份），所以文案只防写错、
+  不治静默失败。含空格系列（Claude Opus / Mistral Large）仍不支持校正，走手改。
