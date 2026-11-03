@@ -49,7 +49,8 @@ def replay(fx: dict) -> dict:
         finally:
             conn.close()
     a = models.build_anchors("", fx["title"])
-    warnings = pipeline._receipt_warnings(ex, set(a["versions"]) | a["series"])
+    warnings = pipeline._receipt_warnings(ex, set(a["versions"]) | a["series"],
+                                          _known(fx, "known_at_decision"))
     return {"extract": ex, "decisions": decisions, "warnings": warnings}
 
 

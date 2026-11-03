@@ -346,6 +346,29 @@ _SEGMENT_MIN_LEN = 8
 _SEGMENT_MAX_GAP = 800
 SEGMENTED_CONFIDENCE_CAP = 0.6
 
+# 剥掉 LLM 自加的证据前缀后至少要保留的长度（与 prompt 的「≥12 字」一致，防剥出碎片引文）
+_STRIP_MIN_LEN = 12
+_LABEL_JOIN = r"[\s\-_·:：]*"
+
+
+def _strip_own_bug_label(quote: str, level: str, bug_id: str) -> tuple[str, str] | None:
+    """剥掉 LLM 自加在证据开头的「本条等级 + 本条编号」前缀（如 王者BUGK005…）。
+
+    仅当开头恰为本条自己的 level + bug_id（容许空格/「BUG」/分隔符，忽略大小写）时返回
+    (剥后引文, 原前缀)；编号不符（如 王者BUG003 配 K005）或剥后过短 → None。"""
+    if not level or not bug_id:
+        return None
+    raw = quote or ""
+    lead = len(raw) - len(raw.lstrip())
+    pat = rf"^{re.escape(level)}{_LABEL_JOIN}(?:bug{_LABEL_JOIN})?{re.escape(bug_id)}"
+    m = re.match(pat, raw[lead:], re.IGNORECASE)
+    if m is None:
+        return None
+    rest = raw[lead + m.end():].lstrip(" \t\r\n:：-·_")
+    if len(_normalize_quote(rest)) < _STRIP_MIN_LEN:
+        return None
+    return rest, m.group(0)
+
 
 def _evidence_segments(quote: str) -> list[str]:
     """按省略号（... / …）切段，每段归一化，去空段。"""
@@ -554,8 +577,14 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
             continue
         # 证据必须是转写原文（归一化后子串；或省略号分隔的有序多段）
         original_quote = r.get("evidence_quote", "")
-        if not _evidence_in_transcript(original_quote, norm_tx):
-            repaired = _fuzzy_evidence_span(original_quote, transcript)
+        quote = original_quote
+        if not _evidence_in_transcript(quote, norm_tx):
+            # LLM 常在证据开头自加「等级+编号」（王者BUGK005…），剥离后再校（P0-1）
+            hit = _strip_own_bug_label(quote, r.get("bug_level") or "", r.get("bug_id") or "")
+            if hit is not None:
+                quote = hit[0]
+        if not _evidence_in_transcript(quote, norm_tx):
+            repaired = _fuzzy_evidence_span(quote, transcript)
             if repaired is None:
                 dropped.append({"record": r, "reason": "evidence 非转写子串"})
                 continue
@@ -567,9 +596,13 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
             r["confidence"] = min(r["confidence"], SEGMENTED_CONFIDENCE_CAP)
             evidence_repaired.append({"original_quote": original_quote,
                                       "matched_quote": matched_quote, "edits": edits})
-        elif len(_evidence_segments(original_quote)) > 1:
-            # 分段证据只证明每段是原文、证明不了拼起来支持结论 → 强制人工复核
-            r["confidence"] = min(r.get("confidence", 0), SEGMENTED_CONFIDENCE_CAP)
+        else:
+            if quote != original_quote:
+                # 剥前缀后精确命中：引文仍是原文，不降置信度
+                r["evidence_quote"] = quote
+            if len(_evidence_segments(quote)) > 1:
+                # 分段证据只证明每段是原文、证明不了拼起来支持结论 → 强制人工复核
+                r["confidence"] = min(r.get("confidence", 0), SEGMENTED_CONFIDENCE_CAP)
         records.append(r)
     records, n_backfill = _backfill_bug_ids(records)
     if n_backfill:

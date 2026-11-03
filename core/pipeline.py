@@ -115,6 +115,15 @@ def _prior_asr_model(extract_path: str) -> str | None:
         return None
 
 
+def _prior_title(extract_path: str) -> str:
+    """reprocess 不重取详情：优先沿用已有 extract 的真实标题（tasks.title 常为空，
+    否则会丢标题里的系列/版本锚点）。读不到则空串。"""
+    try:
+        return json.loads(Path(extract_path).read_text(encoding="utf-8")).get("title") or ""
+    except (OSError, json.JSONDecodeError):
+        return ""
+
+
 def _finish(conn, aweme_id: str, chat_id: str, ex: dict, p: dict) -> str:
     """决策重判 + 渲染 + 终态成功 + 清理媒体（恢复捷径与正常路径共用）。
     M05 统一顺序：publish_lock → 读已提交 known 集合 B → 决策（单事务）→ 渲染。
@@ -142,7 +151,7 @@ def _finish(conn, aweme_id: str, chat_id: str, ex: dict, p: dict) -> str:
     if config.GLADIA_API_KEY and ex.get("asr_model") != "gladia-v2":
         msg += f"\n⚠️ ASR 走了兜底 {ex.get('asr_model')}（Gladia 未生效，查额度/err.log）"
     a = models.build_anchors("", ex.get("title") or "")
-    warnings = _receipt_warnings(ex, set(a["versions"]) | a["series"])
+    warnings = _receipt_warnings(ex, set(a["versions"]) | a["series"], known_b)
     if warnings:
         msg += "".join(f"\n⚠️ {w}" for w in warnings)
         if "vr明细" not in msg:
@@ -156,9 +165,45 @@ _MISSING_CELLS_SHOWN = 5
 _LEVEL_ORDER = {lv: i for i, lv in enumerate(["青铜", "白银", "黄金", "钻石", "王者"])}
 
 
-def _receipt_warnings(ex: dict, title_series: set[str]) -> list[str]:
+def _record_ident(r: dict) -> str:
+    """记录简写身份：模型 × 等级 编号（丢弃/告警用）。"""
+    model = r.get("model_canonical") or ""
+    if not model or model == "UNKNOWN":
+        model = r.get("model_raw") or "UNKNOWN"
+    return f"{model} × {r.get('bug_level') or '?'} {extract_mod._bug_norm(r) or '∅'}"
+
+
+def _unknown_hints(ex: dict, unknown: list[dict], known) -> str:
+    """UNKNOWN 记录的候选版本 + 可粘贴的校正命令（只提示，不改判定）。"""
+    aid = ex.get("video_id") or ""
+    groups: dict[str, list[str]] = {}
+    for r in unknown:
+        groups.setdefault(r.get("model_raw") or "", []).append(
+            extract_mod.record_id(aid, r)[:8])
+    lines: list[str] = []
+    for raw, rids in groups.items():
+        cands = models.suggest_candidates(raw, known)
+        if not cands:
+            lines.append(f"{raw or '未知模型'}（记录码：{'、'.join(rids)}；先 vr明细 查看）")
+            continue
+        names = []
+        for s, v, var in cands:
+            try:
+                names.append(models.compose_canonical(s, v, var))
+            except models.ConfigError:
+                names.append(f"{s} {v} {var}".strip())
+        series, version, variant = cands[0]  # 最新候选，仅作命令示例
+        cmd = f"vr确认 {aid} {{rid}}={series}/{version}" + (f"/{variant}" if variant else "")
+        lines.append(f"{raw}（候选：{'、'.join(names)}）")
+        lines.extend(f"👉 修正：{cmd.format(rid=rid)}" for rid in rids)
+    return "\n".join(lines)
+
+
+def _receipt_warnings(ex: dict, title_series: set[str],
+                      known: set[tuple[str, str, str]] | None = None) -> list[str]:
     """回执告警（只告警，不改决策、不重跑）：丢弃原因聚合、UNKNOWN/空 bug_id 计数、
-    名单×bug 疑似漏格（名单与 bug 集合均由记录推断）、标题提到但无任何记录的系列。"""
+    名单×bug 疑似漏格（名单与 bug 集合均由记录推断）、标题提到但无任何记录的系列。
+    known：决策时点已知版本集，仅用于给 UNKNOWN 记录提示候选版本与校正命令。"""
     out: list[str] = []
     recs = ex.get("records") or []
     reasons: dict[str, int] = {}
@@ -168,18 +213,24 @@ def _receipt_warnings(ex: dict, title_series: set[str]) -> list[str]:
     if ex.get("dropped_count", 0) > 0:
         agg = "、".join(f"{k} {n} 条" for k, n in sorted(reasons.items(), key=lambda x: (-x[1], x[0])))
         out.append(f"丢弃 {ex['dropped_count']} 条：{agg}" if agg else f"丢弃 {ex['dropped_count']} 条")
+        lost = [d["record"] for d in ex.get("dropped") or [] if d.get("record")]
+        for r in lost[:_MISSING_CELLS_SHOWN]:
+            out.append(f"丢失内容：{_record_ident(r)}（该格缺榜）")
     if ex.get("evidence_repaired"):
         out.append(f"证据错字修正 {len(ex['evidence_repaired'])} 条（已降为人工复核，见 vr明细）")
-    n_unknown = sum(1 for r in recs if r.get("model_canonical") == "UNKNOWN")
-    if n_unknown:
-        out.append(f"未识别模型 {n_unknown} 条")
+    unknown = [r for r in recs if r.get("model_canonical") == "UNKNOWN"]
+    if unknown:
+        if known:
+            out.append(f"未识别模型 {len(unknown)} 条\n{_unknown_hints(ex, unknown, known)}")
+        else:
+            out.append(f"未识别模型 {len(unknown)} 条")
     n_nobug = sum(1 for r in recs if not extract_mod._bug_norm(r))
     if n_nobug:
         out.append(f"缺 bug 编号 {n_nobug} 条")
-    known = [r for r in recs if r.get("model_canonical") != "UNKNOWN"]
-    roster = {r["model_canonical"] for r in known}
-    bugs = {(r["bug_level"], extract_mod._bug_norm(r)) for r in known if extract_mod._bug_norm(r)}
-    have = {(r["model_canonical"], r["bug_level"], extract_mod._bug_norm(r)) for r in known}
+    known_recs = [r for r in recs if r.get("model_canonical") != "UNKNOWN"]
+    roster = {r["model_canonical"] for r in known_recs}
+    bugs = {(r["bug_level"], extract_mod._bug_norm(r)) for r in known_recs if extract_mod._bug_norm(r)}
+    have = {(r["model_canonical"], r["bug_level"], extract_mod._bug_norm(r)) for r in known_recs}
     missing = sorted(((m, lv, b) for m in roster for lv, b in bugs if (m, lv, b) not in have),
                      key=lambda x: (x[0], _LEVEL_ORDER.get(x[1], 99), x[1], x[2]))
     if missing:
@@ -187,8 +238,13 @@ def _receipt_warnings(ex: dict, title_series: set[str]) -> list[str]:
         more = f" 等 {len(missing)} 格" if len(missing) > _MISSING_CELLS_SHOWN else ""
         out.append(f"疑似漏提：{shown}{more}（按名单推断）")
     for s in sorted(title_series):
-        if not any(r.get("model_series") == s or r.get("model_canonical", "").startswith(s)
-                   for r in known):
+        if any(r.get("model_series") == s or r.get("model_canonical", "").startswith(s)
+               for r in known_recs):
+            continue
+        unidentified = [r for r in unknown if models.series_from_raw(r.get("model_raw", "")) == s]
+        if unidentified:
+            out.append(f"标题提到 {s}，但 {len(unidentified)} 条记录模型未识别（见上）")
+        else:
             out.append(f"标题提到 {s} 但无任何记录（疑似漏提）")
     return out
 
@@ -274,7 +330,7 @@ def reprocess(conn, aweme_id: str) -> str:
     if transcript is None:
         raise extract_mod.ExtractError(f"无 transcript，无法重跑：{aweme_id}")
     task = db.get_task(conn, aweme_id)
-    title = (task["title"] if task else "") or ""
+    title = _prior_title(p["extract"]) or ((task["title"] if task else "") or "")
     known_a = db.list_known_versions(conn)  # 提取输入集合 A（build 前读）
     ex = extract_mod.build_extract(aweme_id=aweme_id, title=title, transcript=transcript,
                                    asr_model=_prior_asr_model(p["extract"]), known=known_a)

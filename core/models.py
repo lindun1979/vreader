@@ -483,6 +483,32 @@ def resolve_record(model_raw: str, model_series: str, model_version: str,
     return canonical, series, stored_version, variant
 
 
+def _version_key(v: str) -> tuple:
+    """版本号数值排序键（"4" < "4.1" < "10"）。"""
+    return tuple(int(p) if p.isdigit() else -1 for p in (v or "").split("."))
+
+
+def series_from_raw(model_raw: str, *, data: dict | None = None) -> str | None:
+    """raw 文本命中的系列（仅供回执提示/告警，不做版本判定）。"""
+    data = data if data is not None else load_series()
+    return _match_series_from_raw(model_raw, data)[0]
+
+
+def suggest_candidates(model_raw: str, known: set | None, *,
+                       data: dict | None = None) -> list[tuple[str, str, str]]:
+    """UNKNOWN 记录的候选三元组：按 raw 识别系列/变体，从 known 过滤，版本**新→旧**。
+    只供回执提示（人工拍板），不改变 resolve_record 的判定语义。"""
+    data = data if data is not None else load_series()
+    if not known:
+        return []
+    series, variant = _match_series_from_raw(model_raw, data)
+    if series is None:
+        return []
+    cands = {(s, v, var) for (s, v, var) in known
+             if s == series and (not variant or var == variant)}
+    return sorted(cands, key=lambda x: (_version_key(x[1]), x[2]), reverse=True)
+
+
 def _canon_series_name(data: dict, series: str) -> str:
     """把用户输入的系列名归到 models.yml 的正式键：精确 → 忽略大小写 → 别名（忽略大小写）。
     找不到则原样返回（交由 compose_canonical 抛 ConfigError）。"""

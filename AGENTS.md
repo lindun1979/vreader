@@ -5,7 +5,7 @@
 详细规划见 `docs/plans/vreader-mvp-plan-v6.md`（经 6 轮对抗评审收敛）。
 
 **状态：已上线生产（launchd `ai.chivox.vreader`，运维斯登记）。** 主转写为 Gladia、失败时回落到
-本地 SenseVoiceSmall，生产提取主通道为 agy。研发测试全量 335 项。
+本地 SenseVoiceSmall，生产提取主通道为 agy。研发测试全量 344 项。
 
 ## 纪律（public 仓，硬禁令）
 
@@ -30,7 +30,12 @@
   **单段证据近似找回**（WP-B）：精确与分段都失败时，单段且归一化 ≥20 字的证据用编辑距离找回，
   编辑数 1..min(3, L//20) 且最优命中唯一（多处不重叠等距命中 → 丢弃）；quote 改写为**原始转写连续切片**，
   LLM 原文留 envelope `evidence_repaired`，confidence 封顶 0.6 强制复核。多段证据不做近似。
-  回执带丢弃原因聚合 + 证据错字修正计数 + 名单×bug 疑似漏格告警（只告警，不改决策；见 `pipeline._receipt_warnings`）。
+  **证据前缀剥离**（2026-11-03）：精确失败后，若引文开头恰是**本条自己的等级+编号**（如 `王者BUGK005`，
+  容许空格/`BUG`/分隔符；编号不符不剥），剥掉再走精确/近似；剥后精确命中不降置信度（引文仍是原文），
+  剥后近似仍封顶 0.6。
+  回执带丢弃原因聚合 + **丢失内容身份**（模型×等级×编号）+ 证据错字修正计数 + 名单×bug 疑似漏格告警
+  （只告警，不改决策）+ UNKNOWN 组给出**候选版本与可粘贴的 `vr确认 …=<系列>/<版本>` 命令**（只提示，
+  不自动判定；标题系列只是 UNKNOWN 时改报「模型未识别」而非「无任何记录」；见 `pipeline._receipt_warnings`）。
 - **`.0` 孪生写法按已登记写法归一**（WP-A）：`norm_version` 仍不去 `.0`（3.0≠3 的全局语义不改），
   但 `models.known_spelling` 在精确写法未登记、而其孪生（`5`↔`5.0`，仅整数与单个 `.0`）已登记时沿用已登记写法
   （提取 `resolve_record` / 校正 `normalize_triple` 两入口）；两写法都已登记按精确写法。批量确认拒绝
@@ -157,7 +162,7 @@ launchd 管理（禁 nohup），登记运维斯 SERVICES.md。
 
 ## 开发与测试
 
-`pytest -q`（335 项全绿，**只在研发机跑**；生产机不跑 pytest）。
+`pytest -q`（344 项全绿，**只在研发机跑**；生产机不跑 pytest）。
 
 ```bash
 python3.11 -m venv .venv && . .venv/bin/activate
@@ -214,3 +219,9 @@ tests/       pytest；gold/ 真值集与合成回放 fixture 进仓，`fixtures/
   如 `Kimi K3.1 Pro` 应写 `=Kimi/3.1/Pro`（`K` 是 models.yml 的 version_letter）；写错时消息在**路由层**
   就被判成普通聊天、静默回生活助手菜单（`_CONFIRM` 参数正则不允许空格，上下游两份），所以文案只防写错、
   不治静默失败。含空格系列（Claude Opus / Mistral Large）仍不支持校正，走手改。
+- **2026-11-03 证据前缀剥离 + UNKNOWN 回执可操作化**：视频 7703544421631003904（DeepSeek V4.1 Flash
+  vs GPT 6 Astra，王者 K005/钻石 D001）LLM 4 格全召回，但 2 条裸「DeepSick Flash」因版本未口播且
+  4/4.1 两个已知版本并存判 UNKNOWN（用户定：**保持 UNKNOWN 不猜最新**）；GPT×王者被丢弃（LLM 自加
+  `王者BUGK005` 前缀并把 `DBT6` 改成 `GBT6`，编辑距离 10>3）。已实施：证据前缀剥离（见不变量）、
+  prompt 示例去前缀并明令照抄错字、回执给丢弃身份 + UNKNOWN 候选版本/可粘贴校正命令、reprocess 优先
+  沿用 extract 标题（tasks.title 常为空）。规划 `docs/plans/vreader-evidence-prefix-unknown-receipt-plan-v1.md`。

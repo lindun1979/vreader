@@ -60,6 +60,42 @@ def test_title_series_absent_reported():
     assert w == ["标题提到 Grok 但无任何记录（疑似漏提）"]
 
 
+def _unk(raw, level, bug):
+    return {"model_canonical": "UNKNOWN", "model_raw": raw, "model_series": "",
+            "model_version": "", "model_variant": "", "bug_level": level, "bug_id": bug,
+            "score": 0, "rounds": None, "solved": False,
+            "evidence_quote": "证据" * 10, "confidence": 0.95}
+
+
+def test_unknown_hints_candidates_and_commands():
+    r = _unk("DeepSick Flash", "王者", "K005")
+    ex = {"video_id": "7703", "records": [r]}
+    known = {("DeepSeek", "4", "Flash"), ("DeepSeek", "4.1", "Flash")}
+    w = pipeline._receipt_warnings(ex, {"DeepSeek"}, known)
+    text = "\n".join(w)
+    assert "未识别模型 1 条" in text
+    assert "候选：DeepSeek V4.1 Flash、DeepSeek V4 Flash" in text  # 版本新→旧
+    rid = extract.record_id("7703", r)[:8]
+    assert f"👉 修正：vr确认 7703 {rid}=DeepSeek/4.1/Flash" in text
+    assert "标题提到 DeepSeek，但 1 条记录模型未识别（见上）" in w
+    assert not any("无任何记录" in x for x in w)
+
+
+def test_unknown_without_known_set_keeps_plain_line():
+    ex = {"video_id": "7703", "records": [_unk("DeepSick Flash", "王者", "K005")]}
+    assert pipeline._receipt_warnings(ex, set()) == ["未识别模型 1 条"]
+
+
+def test_dropped_identity_reported():
+    ex = {"video_id": "v", "records": [], "dropped_count": 1,
+          "dropped": [{"reason": "evidence 非转写子串",
+                       "record": {"model_canonical": "GPT 6 Astra", "bug_level": "王者",
+                                  "bug_id": "K005"}}]}
+    w = pipeline._receipt_warnings(ex, set())
+    assert "丢弃 1 条：evidence 非转写子串 1 条" in w
+    assert "丢失内容：GPT 6 Astra × 王者 K005（该格缺榜）" in w
+
+
 def test_bare_title_series_without_version_is_reported_when_absent():
     from core import models
     a = models.build_anchors("", "AI大乱斗 Grok 对战 GPT 6 Sol")
