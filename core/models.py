@@ -507,8 +507,11 @@ def resolve_record(model_raw: str, model_series: str, model_version: str,
     # 「混源4.0正式版」锚不上时，同视频「混元4」的锚点仍能证实 4.0）
     anchored_versions = anchors["versions"].get(series, set())
     version = None
-    if rd and rd in cand_versions:  # raw 原文听到的版本优先于 LLM 填的版本
-        cand_versions = [rd] + [cv for cv in cand_versions if cv != rd]
+    # raw 自身里「系列名+版本号」相邻的那个版本才算口播版本（「DeepSick Flash1017」的 1017 是后缀，不算）
+    raw_vs = build_anchors(model_raw, data=data)["versions"].get(series, set())
+    spoken = next(iter(raw_vs)) if len(raw_vs) == 1 else None
+    if spoken and spoken in cand_versions:  # raw 口播的版本优先于 LLM 填的版本
+        cand_versions = [spoken] + [cv for cv in cand_versions if cv != spoken]
     for cv in cand_versions:
         hit = _twin_in(cv, anchored_versions) if cv else None
         if hit is not None:
@@ -523,10 +526,10 @@ def resolve_record(model_raw: str, model_series: str, model_version: str,
         if version is None:
             return UNK
 
-    # 已口播版本闸：raw 带的版本号确是本系列的锚定提及时，最终版本只能是它（或其 .0 孪生），
+    # 已口播版本闸：raw 口播的版本号确是本系列的锚定提及时，最终版本只能是它（或其 .0 孪生），
     # 已知版本集不得把它换成别的版本（根因：混元4.0 被破歧成 Hunyuan 3.0）。
-    if rd and _twin_in(rd, anchored_versions) is not None:
-        allowed = {_apply_version_map(series, x, data) for x in (rd, _dot0_twin(rd)) if x}
+    if spoken and _twin_in(spoken, anchored_versions) is not None:
+        allowed = {_apply_version_map(series, x, data) for x in (spoken, _dot0_twin(spoken)) if x}
         if _apply_version_map(series, norm_version(version), data) not in allowed:
             return UNK
 

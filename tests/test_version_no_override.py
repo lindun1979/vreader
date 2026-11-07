@@ -36,3 +36,11 @@ def test_muse_spark_guard_still_holds():
 def test_bare_doubao_still_falls_back_to_known():
     known = {("Doubao Seed", "2.1", "")}
     assert _resolve("豆包", "Doubao Seed", "", "", "豆包第一轮做对了", known) == "Doubao Seed 2.1"
+
+
+def test_suffix_number_in_raw_is_not_spoken_version():
+    # 真实 7698：转写里 1017 也被锚成「版本」，但 raw 中 1017 不紧跟系列名 → 用 LLM 的 4.1
+    known = {("DeepSeek", "4.1", "Flash")}
+    tx = "DeepSick4.1Flash 参加史山考核 deepsick1017 今天 DeepSick Flash1017 正在验证中"
+    assert models.build_anchors(tx)["versions"]["DeepSeek"] >= {"4.1", "1017"}
+    assert _resolve("DeepSick Flash1017", "DeepSeek", "4.1", "Flash", tx, known) == "DeepSeek V4.1 Flash"
