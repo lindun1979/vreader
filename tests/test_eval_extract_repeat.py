@@ -19,6 +19,13 @@ OUT = json.dumps({"records": [{"model_raw": "Kimi K3", "bug_level": "白银", "b
                  ensure_ascii=False)
 
 
+@pytest.fixture(autouse=True)
+def _agy_backend(monkeypatch):
+    """这些用例 mock 的是 _call_agy：固定评测通道为 agy（不依赖本机 .env 的 LLM_BACKEND）。"""
+    from core import config
+    monkeypatch.setattr(config, "LLM_BACKEND", "agy")
+
+
 @pytest.fixture
 def copy_dir(tmp_path):
     d = tmp_path / "copy" / "token_bug" / VID
@@ -164,3 +171,14 @@ def test_gate_missing_video_fails(monkeypatch, tmp_path):
     assert _gate_run(data, tmp_path) == 5
     s = json.loads((tmp_path / "out" / "summary.json").read_text())
     assert all(pr["videos_missing"] == 1 for pr in s["per_run"])
+
+
+def test_openai_transport_uses_cliproxy_model(copy_dir, tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr(extract, "_call_openai",
+                        lambda p, *, timeout=300, model=None: seen.append(model) or OUT + " " * len(seen))
+    rc = er.main(["--data", str(copy_dir), "--videos", VID, "--runs", "2", "--out", str(tmp_path / "o"),
+                  "--transport", "openai", "--model", "gemini-flash-latest"])
+    assert rc == 0 and seen == ["gemini-flash-latest"] * 2
+    s = json.loads((tmp_path / "o" / "summary.json").read_text())
+    assert s["transport"] == "openai" and s["model"] == "gemini-flash-latest"

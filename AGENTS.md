@@ -45,6 +45,15 @@
   raw 带标记、或源文本该系列+版本紧邻标记（`anchors["release"]`）→ 无变体、不做唯一已知变体补全；同版本另有变体
   组合锚点 → UNKNOWN（判定表见 `resolve_record` docstring）。版本锚定接受 `.0` 孪生等价；raw 的版本号是本系列锚定提及时
   优先于 LLM 版本，且最终版本只能是它或其孪生（known 破歧不得换成别的版本）。
+- **批量公布题**（2026-11）：博主一句话公布、未念编号、结果相同的基础题，LLM 出 `batch_count`，代码按
+  (model_key, 等级, score) 分组**取最大 N（不求和）**展开为 N 条，写 `batch_slot="<score>-<k>"`；身份槽 `b:<batch_slot>`
+  （与输出顺序无关；无 batch_slot 的旧记录身份不变），`_backfill_bug_ids` 跳过。只限青铜/白银/黄金，容量闸
+  （点名+batch ≤3/等级），confidence 封顶 0.6 强制复核；同组不同原文被合并记 `batch_merged` 并回执提示。
+  校正命令拒绝 batch 记录（journal 只记单 rid），走 `repair_extract.py`（delete+add，可 `manual_triple`）。
+  gold 评测里 batch 一律计「batch 多报」。
+- **提取模型可观测**（2026-11）：extract 顶层 `llm_model`（实际 transport:model）、降级时 `llm_fallback_reason`
+  （固定分类，不写原始错误）；每条回执显示「提取模型：…」，落兜底时加警示行。`LLM_MODEL` 可写
+  `latest:<glob>`（agy 无 latest 别名；运行时解析 `agy models`，见 `extract.resolve_agy_model`）。
 - 单实例执行权：数据目录 flock（serve 最先取），CLI 写路径同锁，`--board` 纯读不取锁。
 - 执行边界：外网/重型阶段带 subprocess timeout + 下载字节/时限硬限 + 任务总预算；
   健康 healthz 三态判定，不健康返 503（线程死/outbox 积压/db 连错/低磁盘/ASR 卡死）。
@@ -133,7 +142,8 @@ pending_new_version 记录人工指定三元组，一步「改 extract 四字段
 恢复（serve 启动 + 命令入口各恢复一次；命令内限当前视频）。停机期被 reprocess 改写 → 恢复转
 `needs_review`，人工 CLI 解决：`--list-corrections`（只读 `db.connect_ro`）查看，
 `--resolve-correction <op_id> <keep-file|apply-journal>`（停 serve、取 flock）二选一。
-`keep-file` 保留全局版本登记、仅回退产物。含空格系列名（Claude Opus 等）不支持，走手改。
+`keep-file` 保留全局版本登记、仅回退产物。含空格系列名（Claude Opus 等）与批量记录（batch_slot）不支持，走手改
+（批量记录用 `ops/repair_extract.py` 整组 delete+add）。
 **新变体无条件接受**（V-M17，用户 2026-10 定：人工标定优先于清单）：已知系列下 models.yml 未声明的变体
 （如 `gemini/4/Argon`）原样接受（首次输入定大小写，此后忽略大小写复用），同事务登记进 `known_versions`；
 `models.load_series()` 每次合并「known_versions 中 yml 外的变体」（只读短连接），变体名本身作别名
