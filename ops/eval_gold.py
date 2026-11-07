@@ -45,9 +45,12 @@ def index_records(records: list[dict]) -> tuple[dict, set]:
 
 
 def score_video(gold_truth: dict, records: list[dict]) -> dict:
-    """比对一条视频。返回 {correct,total,diffs}。
+    """比对一条视频。返回 {correct,total,diffs,missing,named_over,batch_over}。
     total = 真值格数；correct = 提取分数恰等真值且键无重复/冲突。
-    多报（extract 有、真值无）计入 diffs（不减 total，但作为 over-report 记录）。"""
+    多报（extract 有、真值无）计入 diffs（不减 total，但作为 over-report 记录）。
+    批量公布题（batch_slot，未念编号）不与任何编号真值匹配（gold 全按编号标注），一律计「batch 多报」。"""
+    batch = [r for r in records if r.get("batch_slot")]
+    records = [r for r in records if not r.get("batch_slot")]
     index, bad = index_records(records)
     gold_keys = set()
     correct = 0
@@ -69,7 +72,13 @@ def score_video(gold_truth: dict, records: list[dict]) -> dict:
         if key not in gold_keys:
             diffs.append({"model": key[0], "bug": key[1], "truth": None,
                           "got": index[key], "reason": "多报"})
-    return {"correct": correct, "total": total, "diffs": diffs}
+    for r in batch:
+        diffs.append({"model": r.get("model_canonical"), "bug": f"{r.get('bug_level')}#b:{r['batch_slot']}",
+                      "truth": None, "got": r.get("score"), "reason": "batch 多报"})
+    return {"correct": correct, "total": total, "diffs": diffs,
+            "missing": sum(1 for d in diffs if d["reason"] in ("缺格", "错分", "重复/冲突键")),
+            "named_over": sum(1 for d in diffs if d["reason"] == "多报"),
+            "batch_over": len(batch)}
 
 
 def _load_extract(data_dir: Path, aweme_id: str) -> dict | None:

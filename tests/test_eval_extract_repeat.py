@@ -91,3 +91,76 @@ def test_raw_stats_counts_dup_and_ellipsis():
              "evidence_quote": "ab"}]
     st = er._raw_stats(json.dumps({"records": recs}))
     assert st["dup_cells"] == 1 and st["ellipsis_evidence"] == 1
+
+
+# ---- 逐轮门槛 --gate（plan batch-bugs WP-1 M8）----
+
+def _gold13(monkeypatch, tmp_path, outcome):
+    """13 个合成 gold 视频 × 3 轮；outcome(vid_idx, run) → 'ok' | 'wrong' | 'batch' | 'fail'。"""
+    gold = [{"aweme_id": f"g{i}", "truth": {"Kimi K3": {"S005": 1}}} for i in range(13)]
+    monkeypatch.setattr(er.eval_gold, "load_gold", lambda: gold)
+    data = tmp_path / "copy"
+    for g in gold:
+        d = data / "token_bug" / g["aweme_id"]
+        d.mkdir(parents=True)
+        (d / "transcript.txt").write_text(TX + " 白银S005 Kimi K3 第一轮的修改结果 没有问题", encoding="utf-8")
+        (d / "extract.json").write_text(json.dumps({"title": "t", "known_versions_used": []}), encoding="utf-8")
+    rec_ok = {"model_raw": "Kimi K3", "bug_level": "白银", "bug_id": "S005", "solved_round": 1,
+              "confidence": 0.9, "evidence_quote": "Kimi K3 第一轮的修改结果 没有问题恭喜加一分"}
+    seq = []
+
+    def fake_agy(prompt_text, *, timeout=300, model=None):
+        n = len(seq)
+        seq.append(1)
+        vi, run = divmod(n, 3)
+        kind = outcome(vi, run)
+        if kind == "fail":
+            raise extract.ExtractError("agy CLI 超时")
+        recs = [dict(rec_ok)]
+        if kind == "wrong":
+            recs[0]["solved_round"] = 0
+        if kind == "batch":
+            recs.append({"model_raw": "Kimi K3", "bug_level": "青铜", "bug_id": "", "solved_round": 1,
+                         "batch_count": 1, "confidence": 0.9,
+                         "evidence_quote": "Kimi K3 第一轮的修改结果 没有问题恭喜加一分"})
+        return json.dumps({"records": recs}, ensure_ascii=False) + " " * n
+    monkeypatch.setattr(extract, "_call_agy", fake_agy)
+    return data
+
+
+def _gate_run(data, tmp_path, gate="correct>=13,named_over<=3,batch_over<=0", videos="gold"):
+    return er.main(["--data", str(data), "--videos", videos, "--runs", "3",
+                    "--out", str(tmp_path / "out"), "--gate", gate])
+
+
+def test_gate_all_runs_pass(monkeypatch, tmp_path):
+    data = _gold13(monkeypatch, tmp_path, lambda v, r: "ok")
+    assert _gate_run(data, tmp_path) == 0
+    s = json.loads((tmp_path / "out" / "summary.json").read_text())
+    assert [pr["correct"] for pr in s["per_run"]] == [13, 13, 13]
+
+
+def test_gate_one_run_below_threshold(monkeypatch, tmp_path):
+    data = _gold13(monkeypatch, tmp_path, lambda v, r: "wrong" if (v, r) == (4, 1) else "ok")
+    assert _gate_run(data, tmp_path) == 5
+
+
+def test_gate_extra_batch_fails(monkeypatch, tmp_path):
+    data = _gold13(monkeypatch, tmp_path, lambda v, r: "batch" if (v, r) == (0, 2) else "ok")
+    assert _gate_run(data, tmp_path) == 5
+    s = json.loads((tmp_path / "out" / "summary.json").read_text())
+    assert s["per_run"][2]["batch_over"] == 1
+
+
+def test_gate_call_failure_fails(monkeypatch, tmp_path):
+    data = _gold13(monkeypatch, tmp_path, lambda v, r: "fail" if (v, r) == (7, 0) else "ok")
+    assert _gate_run(data, tmp_path) == 5
+
+
+def test_gate_missing_video_fails(monkeypatch, tmp_path):
+    data = _gold13(monkeypatch, tmp_path, lambda v, r: "ok")
+    import shutil
+    shutil.rmtree(data / "token_bug" / "g12")
+    assert _gate_run(data, tmp_path) == 5
+    s = json.loads((tmp_path / "out" / "summary.json").read_text())
+    assert all(pr["videos_missing"] == 1 for pr in s["per_run"])

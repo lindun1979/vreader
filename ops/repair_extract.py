@@ -7,7 +7,10 @@ spec（JSON，gitignore，含证据原文）：
    "delete": [{"match": {...}}], "add": [完整 LLM 字段记录], "expect_total": {canonical: 总分}}
   每个 match 必须恰好命中 1 条（按 edit → delete 顺序在当前记录上匹配）。
   add 记录经 resolve_record（提及锚定 + extract 的 known_versions_used）核验三元组、
-  derive_from_round 派生 solved/score/rounds。
+  derive_from_round 派生 solved/score/rounds。add 可带 batch_slot（批量公布题，"<score>-<k>"）；
+  带 "manual_triple": true 时不要求源文本锚点（版本未口播/锚点不足的 UNKNOWN），三元组走与校正命令
+  相同的 normalize_triple（人工即权威；未登记版本 → pending_new_version，vr确认 时登记）。
+  目标 records 出现重复 rid → 拒绝（批量整组改名用 delete + add，避免与目标组已有序号撞身份）。
 
 用法：
   python ops/repair_extract.py --data <data目录> --spec <spec> --expect-spec-sha256 <sha> [--apply]
@@ -72,19 +75,31 @@ def build_target(ex: dict, transcript: str, spec: dict) -> tuple[dict, list[str]
     anchors = models.build_anchors(transcript, ex.get("title") or "", data=data)
     known = {tuple(t) for t in ex.get("known_versions_used") or []}
     for a in spec.get("add") or []:
-        canonical, s, v, var = models.resolve_record(
-            a.get("model_raw", ""), a.get("model_series", ""), a.get("model_version", ""),
-            a.get("model_variant", ""), anchors, data=data, known=known)
         want = (a.get("model_series", ""), a.get("model_version", ""), a.get("model_variant", ""))
+        if a.get("manual_triple"):
+            try:
+                canonical, s, v, var = models.normalize_triple(*want, data=data, known=known)
+            except models.ConfigError as e:
+                raise RepairError(f"manual_triple 三元组非法: {want}: {e}") from e
+        else:
+            canonical, s, v, var = models.resolve_record(
+                a.get("model_raw", ""), a.get("model_series", ""), a.get("model_version", ""),
+                a.get("model_variant", ""), anchors, data=data, known=known)
         if (s, v, var) != want:
-            raise RepairError(f"add 三元组核验失败: spec={want} 锚定解析={(s, v, var)}")
+            raise RepairError(f"add 三元组核验失败: spec={want} 解析={(s, v, var)}")
         r = {"model_canonical": canonical, "model_raw": a["model_raw"], "model_series": s,
              "model_version": v, "model_variant": var, "bug_level": a["bug_level"],
              "bug_id": a["bug_id"], "solved_round": a["solved_round"],
              "evidence_quote": a["evidence_quote"], "confidence": a["confidence"]}
+        if a.get("batch_slot"):
+            r["batch_slot"] = a["batch_slot"]
         _derive(r)
         records.append(r)
-        log.append(f"add   {_brief(r)}")
+        log.append(f"add   {_brief(r)}" + (" [manual_triple]" if a.get("manual_triple") else ""))
+    rids = [extract.record_id(aid, r) for r in records]
+    dup = sorted({x for x in rids if rids.count(x) > 1})
+    if dup:
+        raise RepairError(f"目标 records 有重复 rid（会静默合并）: {dup}")
     target = copy.deepcopy(ex)
     target["records"] = records
     target["result_rev"] = extract.result_rev(aid, records)
@@ -105,7 +120,7 @@ def _totals(records: list[dict]) -> dict:
 
 def _brief(r: dict) -> str:
     return (f"{r.get('model_canonical')}({r.get('model_raw')}) {r.get('bug_level')} "
-            f"{r.get('bug_id') or '∅'} r{r.get('solved_round')} score={r.get('score')} "
+            f"{r.get('bug_id') or ('b:' + r['batch_slot'] if r.get('batch_slot') else '∅')} r{r.get('solved_round')} score={r.get('score')} "
             f"conf={r.get('confidence')}")
 
 
@@ -221,6 +236,11 @@ def run(args) -> int:
                 pipeline._write_decision_snapshot(target, {"extract": str(ex_path)}, known_b)
                 pipeline.render_board(c)
             actual = _decisions(c, aid)
+        except Exception as e:  # noqa: BLE001 写入中途失败：关连接后从备份恢复
+            c.close()
+            print(f"❌ apply 中途失败（{e}），恢复备份", file=sys.stderr)
+            _restore(bdir, db_path, ex_path)
+            return 6
         finally:
             c.close()
         if not _verify(expected, actual):

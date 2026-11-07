@@ -194,6 +194,70 @@ def _backfill_bug_ids(records: list[dict]) -> tuple[list[dict], int]:
     return out, n
 
 
+# ---------- 批量公布题（plan batch-bugs D-A）----------
+_BATCH_LEVELS = ("青铜", "白银", "黄金")   # 基础题；钻石/王者博主逐题验证，不允许批量
+_BASIC_PER_LEVEL = 3                      # 史山考核基础题每等级 3 道（容量闸）
+_BATCH_MAX = 9
+
+
+def _batch_invalid(r: dict, bc) -> str | None:
+    if not isinstance(bc, int) or isinstance(bc, bool) or not 1 <= bc <= _BATCH_MAX:
+        return f"batch_count={bc!r} 越界"
+    if r.get("bug_level") not in _BATCH_LEVELS:
+        return f"{r.get('bug_level')} 不允许批量"
+    if _bug_norm(r):
+        return "带 bug_id 的记录不能批量"
+    return None
+
+
+def _expand_batches(aweme_id: str, records: list[dict], dropped: list[dict]
+                    ) -> tuple[list[dict], list[dict]]:
+    """把带 _batch_count 的记录确定性展开（与输出顺序无关）：
+    按 (model_key, 等级, score) 分组，组内**取最大 N**（同组多条视为同一批题的重复描述，保守合并）；
+    证据取 N 最大者，平局取归一化 quote 最小、再取原文最小；confidence 取组内最小再封顶 0.6；
+    容量闸：点名编号数 + 该等级各组 N 之和 > 3 → 该模型该等级 batch 全丢（点名记录保留）。
+    展开记录写 batch_slot="<score>-<k>"。返回 (新记录列表, batch_merged)。"""
+    plain = [r for r in records if "_batch_count" not in r]
+    groups: dict[tuple, list[dict]] = {}
+    for r in records:
+        if "_batch_count" in r:
+            groups.setdefault((_model_key(r), r["bug_level"], r["score"]), []).append(r)
+    if not groups:
+        return plain, []
+    named: dict[tuple, set] = {}
+    for r in plain:
+        if _bug_norm(r):
+            named.setdefault((_model_key(r), r["bug_level"]), set()).add(_bug_norm(r))
+    chosen: dict[tuple, tuple[int, dict, list[dict]]] = {}
+    for key, rs in groups.items():
+        src = min(rs, key=lambda r: (-r["_batch_count"], _normalize_quote(r["evidence_quote"]),
+                                     r["evidence_quote"]))
+        chosen[key] = (src["_batch_count"], src, rs)
+    load: dict[tuple, int] = {}
+    for (mk, lv, _sc), (n, _src, _rs) in chosen.items():
+        load[(mk, lv)] = load.get((mk, lv), 0) + n
+    out, merged_info = list(plain), []
+    for key in sorted(chosen, key=lambda k: (k[0], k[1], -k[2])):
+        n, src, rs = chosen[key]
+        mk, lv, sc = key
+        if len(named.get((mk, lv), set())) + load[(mk, lv)] > _BASIC_PER_LEVEL:
+            for r in rs:
+                rec = {k: v for k, v in r.items() if k != "_batch_count"}
+                dropped.append({"record": dict(rec, batch_count=r["_batch_count"]),
+                                "reason": "batch 超容量"})
+            continue
+        conf = min(min(r.get("confidence", 0) for r in rs), SEGMENTED_CONFIDENCE_CAP)
+        base = {k: v for k, v in src.items() if k != "_batch_count"}
+        for k in range(1, n + 1):
+            out.append(dict(base, bug_id="", batch_slot=f"{sc}-{k}", confidence=conf))
+        if len(rs) > 1:
+            merged_info.append({"model": src.get("model_canonical") if src.get("model_canonical") != "UNKNOWN"
+                                else src.get("model_raw", ""),
+                                "level": lv, "score": sc, "merged": len(rs) - 1,
+                                "quotes": sorted({r["evidence_quote"] for r in rs})})
+    return out, merged_info
+
+
 def _bug_prefix_conflict(r: dict) -> bool:
     """bug_id 已知前缀却指向别的等级（如 G005 标成钻石）→ 冲突（降 pending）。
     未知前缀不判冲突（可能是新命名规则）。"""
@@ -702,6 +766,13 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
     records, dropped, evidence_repaired = [], [], []
     for r in raw_records:
         r = dict(r)
+        # 批量公布题（D-A）：LLM 用 batch_count 表达「N 道未念编号、结果相同的题」，展开在循环后做
+        bc = r.pop("batch_count", None)
+        if bc is not None:
+            bad = _batch_invalid(r, bc)
+            if bad:
+                dropped.append({"record": dict(r, batch_count=bc), "reason": f"batch 非法: {bad}"})
+                continue
         # 提及锚定解析（LLM 的 raw/series/version/variant 不可信，须过源文本锚定）
         canonical, series, version, variant = models_mod.resolve_record(
             r.get("model_raw", ""), r.get("model_series", ""),
@@ -752,7 +823,10 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
             if len(_evidence_segments(quote)) > 1:
                 # 分段证据只证明每段是原文、证明不了拼起来支持结论 → 强制人工复核
                 r["confidence"] = min(r.get("confidence", 0), SEGMENTED_CONFIDENCE_CAP)
+        if bc is not None:
+            r["_batch_count"] = bc
         records.append(r)
+    records, batch_merged = _expand_batches(aweme_id, records, dropped)
     records, n_backfill = _backfill_bug_ids(records)
     if n_backfill:
         print(f"[extract] bug_id 回填 {n_backfill} 条", flush=True)
@@ -774,6 +848,8 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
         "dropped": dropped,
         "evidence_repaired": evidence_repaired,
     }
+    if batch_merged:
+        extract["batch_merged"] = batch_merged
     if llm_model:
         extract["llm_model"] = llm_model
     if fallback_reason:
@@ -1094,9 +1170,27 @@ def detail_view(conn, aweme_id: str) -> str:
     lines = [f"📋 {aweme_id} 明细（result_rev={ex.get('result_rev', '?')}）"]
     if not by_rid:
         lines.append("（无有效记录）")
+    batch_groups: dict[tuple, list[str]] = {}
+    for rid, r in by_rid.items():
+        if r.get("batch_slot"):
+            batch_groups.setdefault((_model_key(r), r["bug_level"], r.get("score")), []).append(rid)
+    shown_groups: set = set()
     for rid, r in by_rid.items():
         d = db.get_decision(conn, rid)
         label = _DECISION_LABEL.get(d["decision"], d["decision"]) if d else "?"
+        if r.get("batch_slot"):
+            # 批量公布题：同组合并一行（推断的数量须人工核对），列出各记录码
+            gkey = (_model_key(r), r["bug_level"], r.get("score"))
+            if gkey in shown_groups:
+                continue
+            shown_groups.add(gkey)
+            rids = batch_groups[gkey]
+            result = f"第{r['rounds']}轮做对" if r.get("solved") else "没做对"
+            lines.append(f"批量 ×{len(rids)}（推断，未念编号）｜{r['model_canonical']}｜{r['bug_level']}｜"
+                         f"{result}｜conf={r.get('confidence')} → {label}")
+            lines.append(f"    记录码：{' '.join(x[:8] for x in rids)}")
+            lines.append(f"    证据：{r.get('evidence_quote', '')}")
+            continue
         lines.append(
             f"[{rid[:8]}] {r['model_canonical']} · {r['bug_level']} · score={r.get('score')} · "
             f"conf={r.get('confidence')} → {label}")
@@ -1184,6 +1278,10 @@ def correct_and_confirm(conn, aweme_id: str, correction, approver: str) -> tuple
     if len(matches) > 1:
         return False, f"{correction.rid} 前缀不唯一，请多给几位。"
     old_rid = matches[0]
+    if by_rid[old_rid].get("batch_slot"):
+        # 批量记录整组共用身份序号，逐条改名会与目标模型已有的 b:<score>-k 撞身份（plan batch-bugs D-A）
+        return False, ("批量记录（未念编号、按组展开）不支持校正命令，请用 "
+                       "ops/repair_extract.py 整组改（delete + add，可带 manual_triple）。")
     # 归一三元组（人工即权威，不锚定；已知系列下的新变体无条件接受，V-M17）
     data = models_mod.load_series()
     try:

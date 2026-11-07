@@ -5,7 +5,9 @@
 `latest:<glob>` 会先解析成真实模型 id 并记入元数据），
 每次在 prompt 末尾追加唯一 nonce 以绕过上游缓存；原始输出与元数据落盘，解析后与
 gold 比分，并统计「同格多条」「省略号证据」「dropped」。同视频多次输出 sha 全同 →
-SUSPECT_CACHE（独立性检查失败，非零退出）。
+SUSPECT_CACHE（独立性检查失败，非零退出 3）。
+--gate "correct>=161,named_over<=3,batch_over<=0"：逐轮（跨全部所选 gold 视频）判定，任一轮不达标、
+所选 gold 视频缺失或调用/构建失败 → 退出码 5。summary.json 的 per_run 记录逐轮汇总。
 
 用法：
   python ops/eval_extract_repeat.py --data <数据副本目录> --videos <id,...|gold> \\
@@ -73,8 +75,12 @@ def run(args) -> int:
     suspect = []
     for vid in _video_ids(args.videos, gold):
         vdir = data / "token_bug" / vid
-        transcript = (vdir / "transcript.txt").read_text(encoding="utf-8")
-        old = json.loads((vdir / "extract.json").read_text(encoding="utf-8"))
+        try:
+            transcript = (vdir / "transcript.txt").read_text(encoding="utf-8")
+            old = json.loads((vdir / "extract.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            summary["videos"][vid] = [{"missing_video": str(e)[:200]} for _ in range(args.runs)]
+            continue
         known = {tuple(t) for t in old.get("known_versions_used") or []}
         title = old.get("title") or ""
         base = extract._build_prompt(transcript, title, known=known, template=template)
@@ -108,6 +114,8 @@ def run(args) -> int:
                         sv = eval_gold.score_video(gold_by_id[vid]["truth"], ex["records"])
                         res["correct"], res["total"] = sv["correct"], sv["total"]
                         res["diffs"] = sv["diffs"]
+                        res["missing_cells"] = sv["missing"]
+                        res["named_over"], res["batch_over"] = sv["named_over"], sv["batch_over"]
                 except extract.ExtractError as e:
                     res["build_error"] = str(e)
             runs.append(res)
@@ -119,6 +127,7 @@ def run(args) -> int:
     tot_t = sum(r.get("total", 0) for rs in summary["videos"].values() for r in rs)
     summary["gold_correct"], summary["gold_total"] = tot_c, tot_t
     summary["suspect_cache"] = suspect
+    summary["per_run"] = _per_run(summary["videos"], gold_by_id, args.runs)
     out.mkdir(parents=True, exist_ok=True)
     (out / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -129,10 +138,71 @@ def run(args) -> int:
             print(f"{vid:<22}{i:>4}{r.get('raw_count', 0):>5}{r.get('dup_cells', 0):>5}"
                   f"{r.get('ellipsis_evidence', 0):>5}{r.get('dropped', '-'):>6}{acc:>9}")
     print(f"gold 格准确率: {tot_c}/{tot_t}" + (f" = {tot_c / tot_t:.1%}" if tot_t else ""))
+    print(f"{'run':>4}{'correct':>10}{'missing':>9}{'over':>6}{'batch':>7}{'vmiss':>7}{'fail':>6}")
+    for i, pr in enumerate(summary["per_run"]):
+        print(f"{i:>4}{pr['correct']:>5}/{pr['total']:<4}{pr['missing_cells']:>9}{pr['named_over']:>6}"
+              f"{pr['batch_over']:>7}{pr['videos_missing']:>7}{pr['failures']:>6}")
     if suspect:
         print(f"❌ SUSPECT_CACHE（同视频多次输出完全相同）: {', '.join(suspect)}")
         return 3
+    if args.gate:
+        fails = _gate_failures(summary["per_run"], _parse_gate(args.gate))
+        summary["gate"] = {"spec": args.gate, "failures": fails}
+        (out / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+        if fails:
+            print("❌ GATE 未通过：" + "；".join(fails))
+            return 5
+        print(f"✅ GATE 通过：{args.gate}")
     return 0
+
+
+def _per_run(videos: dict, gold_by_id: dict, runs: int) -> list[dict]:
+    """逐轮跨全部所选 gold 视频汇总；缺视频、调用失败、构建失败分别计数。"""
+    out = []
+    for i in range(runs):
+        agg = {"correct": 0, "total": 0, "missing_cells": 0, "named_over": 0, "batch_over": 0,
+               "videos_missing": 0, "failures": 0}
+        for vid, rs in videos.items():
+            if vid not in gold_by_id:
+                continue
+            r = rs[i] if i < len(rs) else {"missing_video": "无该轮结果"}
+            if "missing_video" in r:
+                agg["videos_missing"] += 1
+                continue
+            if "total" not in r:  # 调用失败 / 构建失败 / 解析失败
+                agg["failures"] += 1
+                continue
+            for k_src, k_dst in (("correct", "correct"), ("total", "total"),
+                                 ("missing_cells", "missing_cells"), ("named_over", "named_over"),
+                                 ("batch_over", "batch_over")):
+                agg[k_dst] += r.get(k_src, 0)
+        out.append(agg)
+    return out
+
+
+_GATE_OPS = {">=": lambda a, b: a >= b, "<=": lambda a, b: a <= b}
+
+
+def _parse_gate(spec: str) -> list[tuple[str, str, int]]:
+    """'correct>=161,named_over<=3,batch_over<=0' → [(字段, 运算符, 阈值)]。"""
+    out = []
+    for part in spec.split(","):
+        m = re.fullmatch(r"\s*(\w+)\s*(>=|<=)\s*(\d+)\s*", part)
+        if not m:
+            raise SystemExit(f"--gate 格式错误: {part!r}")
+        out.append((m.group(1), m.group(2), int(m.group(3))))
+    return out
+
+
+def _gate_failures(per_run: list[dict], rules) -> list[str]:
+    fails = []
+    for i, pr in enumerate(per_run):
+        if pr["videos_missing"] or pr["failures"]:
+            fails.append(f"run{i} 缺视频 {pr['videos_missing']} / 失败 {pr['failures']}")
+        for field, op, th in rules:
+            if not _GATE_OPS[op](pr.get(field, 0), th):
+                fails.append(f"run{i} {field}={pr.get(field, 0)} 不满足 {op}{th}")
+    return fails
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -142,6 +212,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--runs", type=int, default=1)
     ap.add_argument("--out", required=True)
     ap.add_argument("--prompt")
+    ap.add_argument("--gate", help='逐轮门槛，如 "correct>=161,named_over<=3,batch_over<=0"（不达标退出 5）')
     ap.add_argument("--model", help="本次评测用的 agy 模型（覆盖 LLM_MODEL，可为 latest:<glob>）")
     return run(ap.parse_args(argv))
 
