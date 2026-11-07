@@ -5,7 +5,7 @@
 详细规划见 `docs/plans/vreader-mvp-plan-v6.md`（经 6 轮对抗评审收敛）。
 
 **状态：已上线生产（launchd `ai.chivox.vreader`，运维斯登记）。** 主转写为 Gladia、失败时回落到
-本地 SenseVoiceSmall，生产提取主通道为 agy。研发测试全量 344 项。
+本地 SenseVoiceSmall，生产提取走 osaka cliproxy 的 `gemini-flash-latest`（2026-11 起，弃用 agy）。研发测试全量 445 项。
 
 ## 纪律（public 仓，硬禁令）
 
@@ -96,9 +96,13 @@
   无 RPM/RPD 限、~4.5x 实时；工具 `ops/live_transcribe.py`，**未接入主管线**、生产 wss 需代理；
   详见 `docs/asr-gemini-transcribe-vs-gladia-eval.md`。当前生产仍 Gladia。）
 - **提取 LLM**：`LLM_BACKEND` 可选 `agy`（Antigravity CLI）/ `openai`（:8317 cliproxy）/ `claude`（本地 CLI）。
-  生产机 **agy gemini-3.7-flash-medium 主**（生产链路 gold 97 格 96/97≈99%；直连不通须配 `AGY_PROXY`
-  代理，见 [[agy-on-prod-via-proxy]]），兜底 :8317 cliproxy 的 gemini-3.5-flash-lite（gold 86.6%）；
-  配 `LLM_MODEL`/`LLM_MODEL_FALLBACK`。**研发机调 agy 必须走与生产相同的美国代理**（`.env` 的
+  **生产（2026-11-07 起）`LLM_BACKEND=openai`，主 `gemini-flash-latest`（cliproxy 别名，现指 3.8 Flash，
+  随 cliproxy 自动跟最新），兜底 `gemini-3.5-flash,gemini-3.5-flash-lite`**；cliproxy 在 osaka（3 个 AI Studio
+  免费 key，round-robin，每 key 每 flash 模型约 20 次/天）。gold 167 格：3.8 156、3.5 Flash 155（差额全在 7677
+  评测环境缺已知集 + 7668 两格 G002 未编号）；7704 批量题只有 3.8 提对（3.5 的批量证据被丢）。
+  **免费 3.7/3.8 常 503 high demand**：cliproxy `request-retry: 3` 会把 3 个 key 一起打进冷却，冷却期内秒回
+  `auth_unavailable`；vreader 主模型失败自动落兜底并在回执标注。评测须串行、失败等 5 分钟重试，勿并发。
+  agy 已弃用（3.7 下线、3.8 headless 常 `no output produced`、Argon 额度贵）；`latest:<glob>` 解析代码保留备用。**研发机调 agy 必须走与生产相同的美国代理**（`.env` 的
   `AGY_PROXY`），否则双地登录触发 Google 风控（2026-09-25 两机 agy 同时被要求验证账号）。
 - **轮次驱动打分**（2026-09 改，用户确认）：LLM 出 `solved_round`（第几轮做对；钻石/王者可到
   第4轮=白做0分但已解，0=没做对），代码 `derive_from_round` 反推 score/solved/rounds
@@ -177,7 +181,7 @@ launchd 管理（禁 nohup），登记运维斯 SERVICES.md。
 
 ## 开发与测试
 
-`pytest -q`（344 项全绿，**只在研发机跑**；生产机不跑 pytest）。
+`pytest -q`（445 项全绿，**只在研发机跑**；生产机不跑 pytest）。
 
 ```bash
 python3.11 -m venv .venv && . .venv/bin/activate
@@ -234,6 +238,13 @@ tests/       pytest；gold/ 真值集与合成回放 fixture 进仓，`fixtures/
   如 `Kimi K3.1 Pro` 应写 `=Kimi/3.1/Pro`（`K` 是 models.yml 的 version_letter）；写错时消息在**路由层**
   就被判成普通聊天、静默回生活助手菜单（`_CONFIRM` 参数正则不允许空格，上下游两份），所以文案只防写错、
   不治静默失败。含空格系列（Claude Opus / Mistral Large）仍不支持校正，走手改。
+- **2026-11-07 批量公布题 + 正式版 + 提取模型漂移**：7704「Hy4正式版」只提 2 条且全 UNKNOWN。根因：生产
+  `LLM_MODEL=gemini-3.7-flash-medium` 已从 agy 下线，每条静默落兜底 flash-lite；「正式版」被补成 4.0 Preview、
+  「混源4.0正式版」被已知集破歧成 Hunyuan 3.0；「其他八道全部一轮作对」这类不念编号的批量结果无法表达
+  （历史 7698 漏 7 道、7688 青铜少计 1 道）。已实施：批量题 batch_count/batch_slot、正式版 release_markers、
+  跨变体 .0 写法、口播版本闸、标题版本优先破歧、提取模型与降级入 extract+回执、读超时走兜底、改用 cliproxy
+  gemini-flash-latest。规划 `docs/plans/vreader-batch-bugs-release-variant-agy-model-plan-v5.md`（review-loop 4 轮）。
+  回滚目标 tag `rollback-base`（旧逻辑 + 宽容 schema + batch 身份兼容，回滚不改写数据）。
 - **2026-11-03 证据前缀剥离 + UNKNOWN 回执可操作化**：视频 7703544421631003904（DeepSeek V4.1 Flash
   vs GPT 6 Astra，王者 K005/钻石 D001）LLM 4 格全召回，但 2 条裸「DeepSick Flash」因版本未口播且
   4/4.1 两个已知版本并存判 UNKNOWN（用户定：**保持 UNKNOWN 不猜最新**）；GPT×王者被丢弃（LLM 自加
