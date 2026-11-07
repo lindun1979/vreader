@@ -151,10 +151,13 @@ def _model_key(r: dict) -> str:
 
 
 def _bug_slot(r: dict) -> str:
-    """空 bug_id 用 evidence 指纹占位，避免空 bug_id 相互碰撞合并（C2）。"""
+    """空 bug_id 用 evidence 指纹占位，避免空 bug_id 相互碰撞合并（C2）。
+    批量公布题（batch_slot="<score>-<k>"）按组内序号占位：同一句证据的 N 道题身份互异、与输出顺序无关。"""
     bn = _bug_norm(r)
     if bn:
         return bn
+    if r.get("batch_slot"):
+        return "b:" + r["batch_slot"]
     return "e:" + hashlib.sha256(_normalize_quote(r.get("evidence_quote", "")).encode()).hexdigest()[:8]
 
 
@@ -171,7 +174,7 @@ def _record_id(aweme_id: str, r: dict) -> str:
 
 def _backfill_bug_ids(records: list[dict]) -> tuple[list[dict], int]:
     """空 bug_id 回填：某等级本视频恰好只有 1 个非空 bug_id → 该等级空 bug_id 记录填成它
-    （使同格记录 attempt_key 对齐，矛盾组机制才能触发）；0 或 ≥2 个不动。返回新列表（浅拷贝，
+    （使同格记录 attempt_key 对齐，矛盾组机制才能触发）；0 或 ≥2 个不动；批量记录（batch_slot）不回填。返回新列表（浅拷贝，
     不改入参）与回填条数。"""
     ids: dict[str, set[str]] = {}
     for r in records:
@@ -181,7 +184,7 @@ def _backfill_bug_ids(records: list[dict]) -> tuple[list[dict], int]:
     for r in records:
         r = dict(r)
         only = ids.get(r.get("bug_level"), set())
-        if not _bug_norm(r) and len(only) == 1:
+        if not _bug_norm(r) and not r.get("batch_slot") and len(only) == 1:
             r["bug_id"] = next(iter(only))
             n += 1
         out.append(r)

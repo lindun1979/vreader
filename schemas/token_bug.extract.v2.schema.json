@@ -49,6 +49,23 @@
         }
       }
     },
+    "batch_merged": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["model", "level", "score", "merged", "quotes"],
+        "properties": {
+          "model": {"type": "string"},
+          "level": {"type": "string"},
+          "score": {"type": "integer", "minimum": 0, "maximum": 3},
+          "merged": {"type": "integer", "minimum": 1},
+          "quotes": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "llm_model": {"type": "string", "minLength": 1},
+    "llm_fallback_reason": {"enum": ["invalid_model", "resolve_failed", "timeout", "empty_output", "auth", "other"]},
     "extracted_at": {"type": "string", "minLength": 1},
     "extractor_version": {"type": "string", "minLength": 1},
     "prompt_hash": {"type": "string", "minLength": 1},
@@ -73,7 +90,8 @@
           "rounds": {"type": ["integer", "null"], "minimum": 1},
           "solved": {"type": "boolean"},
           "evidence_quote": {"type": "string", "minLength": 10},
-          "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "batch_slot": {"type": "string", "pattern": "^[0-3]-[1-9]$"}
         },
         "allOf": [
           {
