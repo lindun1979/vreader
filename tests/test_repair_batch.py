@@ -158,3 +158,27 @@ def test_lock_conflict_refused(conn, data_dir, tmp_path):
         assert _run(data_dir, tmp_path, _spec(), apply=True) == 3
     finally:
         held.release()
+
+
+def test_delete_all_removes_identical_duplicates(conn, data_dir, tmp_path):
+    """7688 形态：两条字段完全相同的空编号记录，delete all 一并删除后按 batch 重加。"""
+    p = _env(conn)
+    ex = _ex(p)
+    dup = next(r for r in ex["records"] if r["model_canonical"] == "Hunyuan 4.0")
+    plain = {k: v for k, v in dup.items() if k != "batch_slot"}
+    ex["records"] += [dict(plain), dict(plain)]
+    ex["result_rev"] = extract.result_rev(AID, ex["records"])
+    Path(p["extract"]).write_text(json.dumps(ex, ensure_ascii=False), encoding="utf-8")
+    one = _spec(delete=[{"match": {"model_canonical": "Hunyuan 4.0", "bug_level": "青铜", "bug_id": "",
+                                   "solved_round": 1, "evidence_quote": QH}}], add=[], expect_total={})
+    assert _run(data_dir, tmp_path, one, name="one.json") == 4  # 普通 match 命中多条 → 拒绝
+    spec = {"aweme_id": AID,
+            "delete": [{"match": {"model_canonical": "Hunyuan 4.0", "bug_level": "青铜", "evidence_quote": QH},
+                        "all": True}],
+            "add": [_add("1-1", level="青铜", q=QH), _add("1-2", level="青铜", q=QH)],
+            "expect_total": {"Hunyuan 4.0": 2, "UNKNOWN": 2}}
+    assert _run(data_dir, tmp_path, spec, apply=True, name="all.json") == 0
+    bronze = [r for r in _ex(p)["records"] if r["bug_level"] == "青铜"]
+    assert sorted(r["batch_slot"] for r in bronze) == ["1-1", "1-2"]
+    nomatch = dict(spec, delete=[{"match": {"bug_level": "王者"}, "all": True}], add=[])
+    assert _run(data_dir, tmp_path, nomatch, name="none.json") == 4

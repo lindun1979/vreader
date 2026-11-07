@@ -4,8 +4,8 @@
 
 spec（JSON，gitignore，含证据原文）：
   {"aweme_id": ..., "edit": [{"match": {字段: 值}, "set": {...}}],
-   "delete": [{"match": {...}}], "add": [完整 LLM 字段记录], "expect_total": {canonical: 总分}}
-  每个 match 必须恰好命中 1 条（按 edit → delete 顺序在当前记录上匹配）。
+   "delete": [{"match": {...}[, "all": true]}], "add": [完整 LLM 字段记录], "expect_total": {canonical: 总分}}
+  每个 match 必须恰好命中 1 条（delete 带 "all": true 时删除全部命中、至少 1 条）（按 edit → delete 顺序在当前记录上匹配）。
   add 记录经 resolve_record（提及锚定 + extract 的 known_versions_used）核验三元组、
   derive_from_round 派生 solved/score/rounds。add 可带 batch_slot（批量公布题，"<score>-<k>"）；
   带 "manual_triple": true 时不要求源文本锚点（版本未口播/锚点不足的 UNKNOWN），三元组走与校正命令
@@ -68,6 +68,15 @@ def build_target(ex: dict, transcript: str, spec: dict) -> tuple[dict, list[str]
         records[i].update(e["set"])
         _derive(records[i])
     for d in spec.get("delete") or []:
+        if d.get("all"):
+            # 删除全部命中（用于字段完全相同、无法单条区分的重复记录，如同证据的空编号记录）
+            hits = [i for i, r in enumerate(records) if all(r.get(k) == v for k, v in d["match"].items())]
+            if not hits:
+                raise RepairError(f"delete(all) match 命中 0 条: {d['match']}")
+            for i in reversed(hits):
+                log.append(f"delete #{i} {_brief(records[i])} (all)")
+                records.pop(i)
+            continue
         i = _match_one(records, d["match"], "delete")
         log.append(f"delete #{i} {_brief(records[i])}")
         records.pop(i)
