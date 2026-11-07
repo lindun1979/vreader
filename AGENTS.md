@@ -176,8 +176,8 @@ launchd 管理（禁 nohup），登记运维斯 SERVICES.md。
 | office:vreader | remote:douyin-feed-api | 硬 | 取不到视频详情，新链接全部处理失败 |
 | office:vreader | remote:feishu-open-api | 硬 | 回执/榜单发不出，outbox 积压超 1h 后 healthz 503 |
 | office:vreader | remote:gladia-api | 软 | 回落本地 SenseVoice：变慢、模型名易糊（回执与榜单显式警示） |
-| office:vreader | remote:singreality-proxy | 软 | agy 提取与 Gladia 代理兜底失效，提取回落 cliproxy |
-| office:vreader | osaka:cliproxy.service | 软 | agy 正常时无感；agy 也挂则提取失败 |
+| office:vreader | remote:singreality-proxy | 软 | Gladia 直连失败时的代理兜底失效，直连也不通则回落本地 SenseVoice |
+| office:vreader | osaka:cliproxy.service | 硬 | 提取主通道（gemini-flash-latest）与兜底全在此，挂了新视频提取失败（终态失败通知） |
 
 ## 开发与测试
 
