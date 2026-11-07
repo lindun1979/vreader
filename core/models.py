@@ -267,7 +267,8 @@ def build_anchors(transcript: str, title: str = "",
       {"versions": {series: set(version)},           # (series, version) 邻接锚点
        "combos":   {series: set((version, variant))}, # (series, version, variant) 组合锚点
        "series":   set(series),                        # 裸系列 token（无邻接数字）出现
-       "release":  {series: set(version)}}             # 版本后紧邻发布版标记（正式版）
+       "release":  {series: set(version)},             # 版本后紧邻发布版标记（正式版）
+       "title_versions": {series: set(version)}}       # 仅标题中的版本提及（本期主角）
     version 存**原始提及数字**（未过 version_map），核验完再由调用方映射。
     """
     data = data if data is not None else load_series()
@@ -326,7 +327,10 @@ def build_anchors(transcript: str, title: str = "",
         # 变体词形单独邻接版本（如 "step3.7 flash" 已被上式吞；此处兜 "flash 3.7 glm" 等
         # 少见倒序不处理——组合锚点以上式的紧邻捕获为准）。
 
-    return {"versions": versions, "combos": combos, "series": series_seen, "release": release}
+    # 标题里的版本提及（本期主角）：供共指歧义时优先采用（标题「Hy4正式版」+ 正文回顾「混元3」）
+    title_versions = build_anchors(title, data=data)["versions"] if title else {}
+    return {"versions": versions, "combos": combos, "series": series_seen, "release": release,
+            "title_versions": title_versions}
 
 
 # ---------- 每记录解析：raw 纠错 + 版本锚定 + 共指兜底（plan M02/M03）----------
@@ -431,6 +435,11 @@ def _coref(series: str, variant: str, anchors: dict, known: set | None,
     if len(cand) == 1:
         return cand[0][0], cand[0][1], False
     if len(cand) > 1:
+        # 标题只提到其中一个版本 → 本期主角，优先于已知集破歧（已知集偏向旧版本：新版本尚未登记）
+        tv = anchors.get("title_versions", {}).get(series, set())
+        tc = [c for c in cand if _twin_in(c[0], tv) is not None]
+        if len(tc) == 1:
+            return tc[0][0], tc[0][1], False
         kc = [c for c in cand if _known_has(known, series, c[0], c[1], data)]
         if len(kc) == 1:
             return kc[0][0], kc[0][1], True   # known 破本视频锚定歧义

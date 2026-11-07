@@ -108,3 +108,11 @@ def test_bulk_confirm_blocks_cross_variant_twin(conn):
                        extractor_version="token_bug/2", prompt_hash="p", commit=True)
     assert extract.approve_pending_for_video(conn, aid, "admin") == (0, [])
     assert extract.twin_blocked_pending(conn, aid) == [(rid, "Hunyuan 4", "Hunyuan 4.0")]
+
+
+def test_bare_series_ambiguity_prefers_title_version():
+    """7704：正文回顾「混元3」+ 主角「混元4」，裸「混元」不得被已知集破歧成旧版 3.0；标题 Hy4 指明主角。"""
+    tx = "混元4正式版参加史山考核了 当初的混元3取得了6分 最长的依然是白银BugS001 混元用了67分钟 依然没有作对"
+    assert _resolve("混元", "Hunyuan", "", "", tx, TITLE_7704) == "Hunyuan 4.0"
+    # 标题不提版本时维持原行为（已知集破歧）
+    assert _resolve("混元", "Hunyuan", "", "", tx, "史山考核") == "Hunyuan 3.0"
