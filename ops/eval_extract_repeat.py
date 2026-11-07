@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """提取 prompt 重复评测（只读；不写生产、不写 data 原件）。
 
-对每个视频按 N 次独立运行调用 agy 主通道（不走兜底链，模型固定 config.LLM_MODEL），
+对每个视频按 N 次独立运行调用 agy 主通道（不走兜底链，模型 = --model 或 config.LLM_MODEL，
+`latest:<glob>` 会先解析成真实模型 id 并记入元数据），
 每次在 prompt 末尾追加唯一 nonce 以绕过上游缓存；原始输出与元数据落盘，解析后与
 gold 比分，并统计「同格多条」「省略号证据」「dropped」。同视频多次输出 sha 全同 →
 SUSPECT_CACHE（独立性检查失败，非零退出）。
 
 用法：
   python ops/eval_extract_repeat.py --data <数据副本目录> --videos <id,...|gold> \\
-      --runs N --out <输出目录> [--prompt <模板文件>]
+      --runs N --out <输出目录> [--prompt <模板文件>] [--model <agy 模型或 latest:<glob>>]
 数据副本目录布局同生产 data：<data>/token_bug/<id>/{transcript.txt,extract.json}。
 """
 from __future__ import annotations
@@ -65,7 +66,9 @@ def run(args) -> int:
     gold = eval_gold.load_gold()
     gold_by_id = {v["aweme_id"]: v for v in gold}
     template = Path(args.prompt).read_text(encoding="utf-8") if args.prompt else None
-    summary: dict = {"model": config.LLM_MODEL, "runs": args.runs,
+    requested = args.model or config.LLM_MODEL
+    model = extract.resolve_agy_model(requested)  # 只覆盖本次运行，不读写 .env
+    summary: dict = {"model": model, "model_requested": requested, "runs": args.runs,
                      "prompt_file": args.prompt, "videos": {}}
     suspect = []
     for vid in _video_ids(args.videos, gold):
@@ -84,13 +87,13 @@ def run(args) -> int:
             t0 = time.time()
             err = None
             try:
-                raw = extract._call_agy(prompt, timeout=config.LLM_TIMEOUT, model=config.LLM_MODEL)
+                raw = extract._call_agy(prompt, timeout=config.LLM_TIMEOUT, model=model)
             except extract.ExtractError as e:
                 raw, err = "", str(e)
             dt = time.time() - t0
             (odir / f"run{i}.txt").write_text(raw, encoding="utf-8")
             meta = {"nonce": nonce, "prompt_sha256": _sha(prompt), "output_sha256": _sha(raw),
-                    "model": config.LLM_MODEL, "elapsed_s": round(dt, 2),
+                    "model": model, "llm_model": f"agy:{model}", "elapsed_s": round(dt, 2),
                     "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"), "error": err}
             (odir / f"run{i}.meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2),
                                                    encoding="utf-8")
@@ -139,6 +142,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--runs", type=int, default=1)
     ap.add_argument("--out", required=True)
     ap.add_argument("--prompt")
+    ap.add_argument("--model", help="本次评测用的 agy 模型（覆盖 LLM_MODEL，可为 latest:<glob>）")
     return run(ap.parse_args(argv))
 
 

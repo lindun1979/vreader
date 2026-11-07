@@ -26,7 +26,7 @@ def test_reprocess_preserves_asr_model(conn, data_dir, monkeypatch):
     db.insert_task(conn, aweme_id=aid, channel="token_bug", raw_link="x",
                    chat_id="c", sender_id="s", title="t")
     monkeypatch.setattr(ex_mod, "_call_llm",
-                        lambda *a, **k: json.dumps({"records": [r]}, ensure_ascii=False))
+                        lambda *a, **k: (json.dumps({"records": [r]}, ensure_ascii=False), "agy:test", None))
     pipeline.reprocess(conn, aid)
     got = json.loads((vd / "extract.json").read_text(encoding="utf-8"))
     assert got["asr_model"] == "gladia-v2"  # 保留原引擎，不误标默认 SenseVoice
@@ -47,7 +47,7 @@ def test_reprocess_preserves_extract_title_when_task_title_empty(conn, data_dir,
     db.insert_task(conn, aweme_id=aid, channel="token_bug", raw_link="x",
                    chat_id="c", sender_id="s", title="")
     monkeypatch.setattr(ex_mod, "_call_llm",
-                        lambda *a, **k: json.dumps({"records": [r]}, ensure_ascii=False))
+                        lambda *a, **k: (json.dumps({"records": [r]}, ensure_ascii=False), "agy:test", None))
     pipeline.reprocess(conn, aid)
     got = json.loads((vd / "extract.json").read_text(encoding="utf-8"))
     assert got["title"] == "GPT6Astra 对战 DeepSeek Flash"

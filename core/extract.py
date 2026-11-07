@@ -6,12 +6,15 @@
 from __future__ import annotations
 
 import copy
+import fnmatch
 import hashlib
 import json
 import os
 import re
 import sqlite3
 import subprocess
+import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -203,7 +206,7 @@ def _bug_prefix_conflict(r: dict) -> bool:
 
 def _providers() -> list[tuple[str, str | None]]:
     """按后端返回 (transport, model) 尝试链（主在前，兜底在后）。
-    agy 后端：LLM_MODEL 走 agy 主通道，LLM_MODEL_FALLBACK 走 :8317 兜底。"""
+    agy 后端：LLM_MODEL 走 agy 主通道（可为 `latest:<glob>`），LLM_MODEL_FALLBACK 走 :8317 兜底。"""
     if config.LLM_BACKEND == "claude":
         return [("claude", None)]
     if config.LLM_BACKEND == "agy":
@@ -220,48 +223,190 @@ def _dispatch(transport: str, model: str | None, prompt: str, *, timeout: int) -
     return _call_openai(prompt, timeout=timeout, model=model)
 
 
-def _call_llm(prompt: str, *, timeout: int | None = None) -> str:
+# ---------- agy 模型「跟随最新」：LLM_MODEL=latest:<glob>（agy 无 latest 别名）----------
+_LATEST_PREFIX = "latest:"
+_LATEST_TTL = 6 * 3600        # 解析结果缓存
+_BAD_TTL = 6 * 3600           # 报 invalid 的模型拉黑时长
+_RERESOLVE_MIN_GAP = 600      # 坏模型期内重新解析的最小间隔
+_latest_lock = threading.Lock()
+_latest_cache: dict[str, tuple[str, float]] = {}   # glob -> (model, resolved_at)
+_bad_models: dict[str, float] = {}                 # model -> marked_at
+_last_resolve_try: dict[str, float] = {}           # glob -> 上次解析尝试时刻
+
+
+class ModelResolveError(Exception):
+    pass
+
+
+def _agy_models() -> list[str]:
+    """`agy models` 第一列（tab 分隔）。失败抛 ModelResolveError。"""
+    try:
+        rc, out, err = _run_cli([config.AGY_BIN, "models"], timeout=30, env=_agy_env(),
+                                name="agy models", cwd=_empty_cwd())
+    except ExtractError as e:
+        raise ModelResolveError(str(e)) from e
+    if rc != 0:
+        raise ModelResolveError(f"agy models 退出码 {rc}: {err[:200]}")
+    ids = [ln.split("\t", 1)[0].strip() for ln in out.splitlines() if "\t" in ln]
+    if not ids:
+        raise ModelResolveError("agy models 无模型行")
+    return ids
+
+
+def _pick_latest(ids: list[str], glob: str, bad: set[str]) -> str | None:
+    """glob 中 `*` 匹配到的片段须是纯数字版本（3.8 / 3.10）；按数字元组取最大，并列取 id 字典序最大。"""
+    rx = re.compile("^" + re.escape(glob).replace(r"\*", r"(\d+(?:\.\d+)*)") + "$")
+    best = None
+    for mid in ids:
+        if mid in bad:
+            continue
+        m = rx.match(mid)
+        if not m:
+            continue
+        key = (tuple(int(x) for g in m.groups() for x in g.split(".")), mid)
+        if best is None or key > best:
+            best = key
+    return best[1] if best else None
+
+
+def resolve_agy_model(spec: str, *, force: bool = False) -> str:
+    """把 LLM_MODEL 解析成 agy 真实模型 id。显式名原样返回；`latest:<glob>` 见 plan batch-bugs D-E 状态表。
+    解析失败且无可用旧值 → ModelResolveError（调用方走兜底，分类 resolve_failed）。"""
+    if not spec or not spec.startswith(_LATEST_PREFIX):
+        return spec
+    glob = spec[len(_LATEST_PREFIX):]
+    now = time.time()
+    with _latest_lock:
+        for mdl, t in list(_bad_models.items()):
+            if now - t > _BAD_TTL:
+                del _bad_models[mdl]
+        cached = _latest_cache.get(glob)
+        if cached and not force and now - cached[1] < _LATEST_TTL and cached[0] not in _bad_models:
+            return cached[0]
+        if (cached and cached[0] in _bad_models and not force
+                and now - _last_resolve_try.get(glob, 0) < _RERESOLVE_MIN_GAP):
+            raise ModelResolveError(f"{cached[0]} 已失效，{_RERESOLVE_MIN_GAP}s 内不重复解析")
+        _last_resolve_try[glob] = now
+        try:
+            picked = _pick_latest(_agy_models(), glob, set(_bad_models))
+        except ModelResolveError:
+            picked = None
+        if picked:
+            _latest_cache[glob] = (picked, now)
+            return picked
+        if cached and cached[0] not in _bad_models:
+            return cached[0]  # 解析失败沿用上次成功值
+        raise ModelResolveError(f"latest:{glob} 无可用模型")
+
+
+def _reset_latest_cache() -> None:
+    """测试/进程重启语义：清空解析缓存与坏模型标记。"""
+    with _latest_lock:
+        _latest_cache.clear()
+        _bad_models.clear()
+        _last_resolve_try.clear()
+
+
+def _classify_failure(e: Exception) -> str:
+    """主通道失败原因 → 固定分类（不把原始错误文本带进回执/extract）。"""
+    msg = str(e).lower()
+    if isinstance(e, ModelResolveError):
+        return "resolve_failed"
+    if "invalid model selection" in msg or "not recognized as a known model" in msg:
+        return "invalid_model"
+    if "超时" in msg or "timeout" in msg or "timed out" in msg:
+        return "timeout"
+    if "返回空" in msg or "no output produced" in msg:
+        return "empty_output"
+    if any(k in msg for k in ("auth", "401", "403", "sign in", "unauthorized")):
+        return "auth"
+    return "other"
+
+
+def _call_llm(prompt: str, *, timeout: int | None = None) -> tuple[str, str, str | None]:
+    """主通道 + 兜底链；每个尝试重试一次（偶发超时/空返回/授权不可用）。
+    返回 (文本, 实际 "transport:model", 降级分类|None)：结果来自兜底时带主通道失败分类。"""
     timeout = timeout or config.LLM_TIMEOUT
-    # 主通道 + 兜底链；每个尝试重试一次（偶发超时/空返回/授权不可用）
     last: Exception | None = None
-    for transport, model in _providers():
-        for _ in range(2):
+    primary_fail: str | None = None
+    for idx, (transport, model) in enumerate(_providers()):
+        spec = model
+        for attempt in range(2):
             try:
+                if transport == "agy":
+                    model = resolve_agy_model(spec)
                 out = _dispatch(transport, model, prompt, timeout=timeout)
                 if out.strip():
-                    return out
+                    return out, f"{transport}:{model or 'default'}", (primary_fail if idx else None)
                 last = ExtractError("LLM 返回空")
+            except ModelResolveError as e:
+                last = e
+                break
             except ExtractError as e:
                 last = e
-                # 授权不可用/服务不可用 → 直接切下一个通道
-                if any(s in str(e) for s in ("auth_unavailable", "503", "unavailable")):
+                cls = _classify_failure(e)
+                if transport == "agy" and cls == "invalid_model" and spec and spec.startswith(_LATEST_PREFIX):
+                    # 选中的模型下线：拉黑并强制重新解析一次（每次调用至多一次），新模型再试
+                    with _latest_lock:
+                        _bad_models[model] = time.time()
+                    try:
+                        if resolve_agy_model(spec, force=True) != model and attempt == 0:
+                            continue
+                    except ModelResolveError:
+                        pass
                     break
+                # 授权不可用/服务不可用/模型无效 → 直接切下一个通道
+                if cls == "invalid_model" or any(
+                        k in str(e) for k in ("auth_unavailable", "503", "unavailable")):
+                    break
+        if idx == 0 and last is not None:
+            primary_fail = _classify_failure(last)
     raise last or ExtractError("LLM 调用失败")
 
 
-def _call_agy(prompt: str, *, timeout: int = 300, model: str | None = None) -> str:
-    """调 agy（Antigravity CLI）print 模式，返回模型文本。生产直连不通，按
-    config.AGY_PROXY 注入 HTTP 代理 env（agy 是 Go 二进制，认标准 HTTPS_PROXY）。"""
+def _agy_env() -> dict:
     env = dict(os.environ)
     if config.AGY_PROXY:
         env["HTTPS_PROXY"] = config.AGY_PROXY
         env["HTTP_PROXY"] = config.AGY_PROXY
         env.setdefault("NO_PROXY", "127.0.0.1,localhost")
-    cmd = [config.AGY_BIN, "-p", prompt, "--model", model or config.LLM_MODEL,
+    return env
+
+
+_EMPTY_CWD: str | None = None
+
+
+def _empty_cwd() -> str:
+    """agy 子进程的工作目录：进程内复用一个空临时目录（在仓库目录下跑时模型会尝试调工具、
+    被 headless 拒绝 → 空输出）。"""
+    global _EMPTY_CWD
+    if _EMPTY_CWD is None or not os.path.isdir(_EMPTY_CWD):
+        _EMPTY_CWD = tempfile.mkdtemp(prefix="vreader-agy-")
+    return _EMPTY_CWD
+
+
+def _call_agy(prompt: str, *, timeout: int = 300, model: str | None = None) -> str:
+    """调 agy（Antigravity CLI）print 模式，返回模型文本。生产直连不通，按
+    config.AGY_PROXY 注入 HTTP 代理 env（agy 是 Go 二进制，认标准 HTTPS_PROXY）。
+    cwd 为空临时目录；输出含 `no output produced`（工具被 headless 拒绝）按错误处理。"""
+    cmd = [config.AGY_BIN, "-p", prompt, "--model", model or resolve_agy_model(config.LLM_MODEL),
            "--print-timeout", f"{timeout}s"]
-    rc, out, err = _run_cli(cmd, timeout=timeout + 30, env=env, name="agy CLI")
+    rc, out, err = _run_cli(cmd, timeout=timeout + 30, env=_agy_env(), name="agy CLI",
+                            cwd=_empty_cwd())
     if rc != 0:
         raise ExtractError(f"agy CLI 退出码 {rc}: {err[:300]}")
+    if "no output produced" in out or "no output produced" in err:
+        raise ExtractError("agy 无输出（no output produced）")
     return out or ""
 
 
 def _run_cli(cmd: list[str], *, timeout: int, env: dict | None = None,
-             name: str = "CLI") -> tuple[int, str, str]:
+             name: str = "CLI", cwd: str | None = None) -> tuple[int, str, str]:
     """跑外部 CLI（自立进程组）；超时 killpg 杀整棵执行树后代，避免遗留 ffmpeg 等孤儿。"""
     import signal
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                text=True, env=env, start_new_session=True)
+                                text=True, env=env, start_new_session=True, cwd=cwd)
     except FileNotFoundError as e:
         raise ExtractError(f"{name} 未找到: {cmd[0]}") from e
     try:
@@ -548,8 +693,9 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
     data = models_mod.load_series()
     anchors = models_mod.build_anchors(transcript, title, data=data)
     prompt = _build_prompt(transcript, title, known=known)
+    llm_model, fallback_reason = None, None
     if claude_text is None:
-        claude_text = _call_llm(prompt)
+        claude_text, llm_model, fallback_reason = _call_llm(prompt)
     raw_records = _parse_records_json(claude_text)
 
     norm_tx = _normalize_quote(transcript)
@@ -628,6 +774,10 @@ def build_extract(*, aweme_id: str, title: str, transcript: str,
         "dropped": dropped,
         "evidence_repaired": evidence_repaired,
     }
+    if llm_model:
+        extract["llm_model"] = llm_model
+    if fallback_reason:
+        extract["llm_fallback_reason"] = fallback_reason
     extract["result_rev"] = result_rev(aweme_id, records)
     # 空 records 不再当失败重试（agy M-02/cf5#11）：显式 no_content 终态成功。
     if not records:

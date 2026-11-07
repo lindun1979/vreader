@@ -109,6 +109,6 @@ def test_reprocess_keeps_approved(conn, data_dir, monkeypatch):
                "model_variant": "", "bug_level": "青铜", "bug_id": "B001", "solved_round": 1,
                "evidence_quote": quote, "confidence": 0.5}
     monkeypatch.setattr(ex_mod, "_call_llm",
-                        lambda *a, **k: json.dumps({"records": [llm_rec]}, ensure_ascii=False))
+                        lambda *a, **k: (json.dumps({"records": [llm_rec]}, ensure_ascii=False), "agy:test", None))
     pipeline.reprocess(conn, aid)
     assert db.get_decision(conn, rid)["decision"] == db.APPROVED
