@@ -172,3 +172,52 @@ def test_finish_no_content_carries_drop_line_and_detail(conn, data_dir, monkeypa
     pipeline._finish(conn, "v1", "c", ex, p)
     msg = _outbox(conn)
     assert "⚠️ 丢弃 1 条：evidence 非转写子串 1 条" in msg and "👉 查看明细：vr明细 v1" in msg
+
+
+# ---- batch-bugs D-B / D-A / D-E 回执 ----
+
+def _basic(model, n, start=0):
+    lv = ["青铜", "白银", "黄金"]
+    return [dict(_r(model, lv[i % 3], f"{'BSG'[i % 3]}00{i}"), score=1) for i in range(start, start + n)]
+
+
+def test_basic_count_warns_when_short():
+    ex = {"video_id": "v", "records": _basic("Hunyuan 4.0", 8)}
+    w = pipeline._receipt_warnings(ex, set(), transcript="这九个基础bug一共12分")
+    assert "Hunyuan 4.0 基础题只提取到 8/9 道（疑似漏提批量公布的题）" in w
+
+
+def test_basic_count_ok_when_nine():
+    ex = {"video_id": "v", "records": _basic("Hunyuan 4.0", 9)}
+    assert not [x for x in pipeline._receipt_warnings(ex, set(), transcript="9道基础题")
+                if "基础题只提取到" in x]
+
+
+def test_basic_count_needs_mention():
+    ex = {"video_id": "v", "records": _basic("Hunyuan 4.0", 2)}
+    assert not [x for x in pipeline._receipt_warnings(ex, set(), transcript="今天打钻石")
+                if "基础题只提取到" in x]
+
+
+def test_basic_count_dedups_rid_and_skips_unknown():
+    recs = _basic("Hunyuan 4.0", 8) + _basic("Hunyuan 4.0", 1)  # 第 9 条与第 1 条同 rid
+    recs += [dict(_r("UNKNOWN", "青铜", "B009"), score=1)]
+    ex = {"video_id": "v", "records": recs}
+    w = pipeline._receipt_warnings(ex, set(), transcript="九个基础bug")
+    assert "Hunyuan 4.0 基础题只提取到 8/9 道（疑似漏提批量公布的题）" in w
+    assert not [x for x in w if x.startswith("UNKNOWN 基础题")]
+
+
+def test_batch_merged_hint_only_for_distinct_quotes():
+    g = {"model": "Hunyuan 4.0", "level": "白银", "score": 1, "merged": 1, "quotes": ["甲甲甲甲甲甲甲甲甲甲", "乙乙乙乙乙乙乙乙乙乙"]}
+    w = pipeline._receipt_warnings({"records": [], "batch_merged": [g]}, set())
+    assert "Hunyuan 4.0 白银 有 2 条批量描述被合并，请在明细核对数量" in w
+    g2 = dict(g, quotes=["甲甲甲甲甲甲甲甲甲甲", "甲甲甲甲甲甲甲甲甲甲"])
+    assert not [x for x in pipeline._receipt_warnings({"records": [], "batch_merged": [g2]}, set())
+                if "批量描述被合并" in x]
+
+
+def test_batch_records_not_counted_as_missing_bug_id():
+    recs = [dict(_r("Hunyuan 4.0", "青铜", ""), batch_slot="1-1"), _r("Hunyuan 4.0", "黄金", "")]
+    w = pipeline._receipt_warnings({"records": recs}, set())
+    assert "缺 bug 编号 1 条" in w

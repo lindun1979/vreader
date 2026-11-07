@@ -6,6 +6,7 @@ outbox（与状态同事务）。成功后删媒体、留 transcript+extract。
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import time
 from pathlib import Path
@@ -150,8 +151,13 @@ def _finish(conn, aweme_id: str, chat_id: str, ex: dict, p: dict) -> str:
         msg += f"\n⚠️ {counts['approved_stale']} 条此前已确认的记录本次消失（已下榜）。"
     if config.GLADIA_API_KEY and ex.get("asr_model") != "gladia-v2":
         msg += f"\n⚠️ ASR 走了兜底 {ex.get('asr_model')}（Gladia 未生效，查额度/err.log）"
+    if ex.get("llm_model"):
+        msg += f"\n提取模型：{ex['llm_model']}"
+    if ex.get("llm_fallback_reason"):
+        msg += (f"\n⚠️ 主提取模型不可用（{ex['llm_fallback_reason']}），本条由兜底提取，准确率较低")
     a = models.build_anchors("", ex.get("title") or "")
-    warnings = _receipt_warnings(ex, set(a["versions"]) | a["series"], known_b)
+    warnings = _receipt_warnings(ex, set(a["versions"]) | a["series"], known_b,
+                                 transcript=_read_if_present(p["transcript"]) or "")
     if warnings:
         msg += "".join(f"\n⚠️ {w}" for w in warnings)
         if "vr明细" not in msg:
@@ -199,10 +205,17 @@ def _unknown_hints(ex: dict, unknown: list[dict], known) -> str:
     return "\n".join(lines)
 
 
+_BASIC_RE = re.compile(r"(九|9)\s*(个|道)?\s*基础\s*(bug|题)", re.IGNORECASE)
+_BASIC_LEVELS = ("青铜", "白银", "黄金")
+_BASIC_TOTAL = 9  # 史山考核基础题 = 3 青铜 + 3 白银 + 3 黄金
+
+
 def _receipt_warnings(ex: dict, title_series: set[str],
-                      known: set[tuple[str, str, str]] | None = None) -> list[str]:
+                      known: set[tuple[str, str, str]] | None = None, *,
+                      transcript: str = "") -> list[str]:
     """回执告警（只告警，不改决策、不重跑）：丢弃原因聚合、UNKNOWN/空 bug_id 计数、
-    名单×bug 疑似漏格（名单与 bug 集合均由记录推断）、标题提到但无任何记录的系列。
+    名单×bug 疑似漏格（名单与 bug 集合均由记录推断）、标题提到但无任何记录的系列、
+    批量描述被合并、基础题 X/9 对账（转写提到「九个基础 bug」时）。
     known：决策时点已知版本集，仅用于给 UNKNOWN 记录提示候选版本与校正命令。"""
     out: list[str] = []
     recs = ex.get("records") or []
@@ -224,7 +237,11 @@ def _receipt_warnings(ex: dict, title_series: set[str],
             out.append(f"未识别模型 {len(unknown)} 条\n{_unknown_hints(ex, unknown, known)}")
         else:
             out.append(f"未识别模型 {len(unknown)} 条")
-    n_nobug = sum(1 for r in recs if not extract_mod._bug_norm(r))
+    for g in ex.get("batch_merged") or []:
+        if len(set(g.get("quotes") or [])) >= 2:
+            out.append(f"{g['model']} {g['level']} 有 {g['merged'] + 1} 条批量描述被合并，"
+                       f"请在明细核对数量")
+    n_nobug = sum(1 for r in recs if not extract_mod._bug_norm(r) and not r.get("batch_slot"))
     if n_nobug:
         out.append(f"缺 bug 编号 {n_nobug} 条")
     known_recs = [r for r in recs if r.get("model_canonical") != "UNKNOWN"]
@@ -246,6 +263,13 @@ def _receipt_warnings(ex: dict, title_series: set[str],
             out.append(f"标题提到 {s}，但 {len(unidentified)} 条记录模型未识别（见上）")
         else:
             out.append(f"标题提到 {s} 但无任何记录（疑似漏提）")
+    if transcript and _BASIC_RE.search(transcript):
+        aid = ex.get("video_id", "")
+        for m in sorted(roster):
+            n = len({extract_mod.record_id(aid, r) for r in known_recs
+                     if r["model_canonical"] == m and r.get("bug_level") in _BASIC_LEVELS})
+            if n < _BASIC_TOTAL:
+                out.append(f"{m} 基础题只提取到 {n}/{_BASIC_TOTAL} 道（疑似漏提批量公布的题）")
     return out
 
 
