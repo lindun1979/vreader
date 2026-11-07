@@ -17,6 +17,10 @@
 #   seed_variant_versions  变体款的已知版本 {变体名: [版本...]}。
 # 上线后新增版本一律走 vr确认（confirm），不再回写 seed 字段。
 
+# 发布版标记（顶层，不是系列）：紧跟版本号或出现在模型名原文里时表示「无变体的正式发布款」
+# （如「混元4正式版」= Hunyuan 4.0，区别于 Hunyuan 4.0 Preview）。拉丁词按词边界匹配。
+release_markers: [正式版, 正式, release, ga]
+
 GLM:
   format: "GLM-{v}"
   aliases: [glm, grm, gm, 智谱, 智普]

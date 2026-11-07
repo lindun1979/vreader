@@ -41,15 +41,19 @@ class ConfigError(Exception):
 
 
 _CACHE: tuple[float, dict] | None = None
+_RELEASE_MARKERS: list[str] = []
 
 
 def load_series() -> dict:
-    """读 models.yml v2（按 mtime 缓存）。返回 {series: {format, aliases, ...}}。"""
-    global _CACHE
+    """读 models.yml v2（按 mtime 缓存）。返回 {series: {format, aliases, ...}}。
+    顶层 `release_markers`（发布版标记词）不是系列，加载时剥离，经 release_markers() 取。"""
+    global _CACHE, _RELEASE_MARKERS
     mtime = _MODELS_PATH.stat().st_mtime
     if _CACHE is None or _CACHE[0] != mtime:
         data = yaml.safe_load(_MODELS_PATH.read_text(encoding="utf-8")) or {}
+        markers = data.pop("release_markers", None) or []
         _validate_series(data)
+        _RELEASE_MARKERS = sorted((str(m).lower() for m in markers), key=len, reverse=True)
         _CACHE = (mtime, data)
     learned = _learned_variants(_CACHE[1])
     if not learned:
@@ -58,6 +62,25 @@ def load_series() -> dict:
     for series, variant in learned:
         data = add_variant(data, series, variant, inplace=True)
     return data
+
+
+def release_markers() -> list[str]:
+    """发布版标记词（正式版/release 等，小写、长词在前）：表示「无变体的正式发布款」。"""
+    load_series()
+    return list(_RELEASE_MARKERS)
+
+
+def _marker_alt(markers: list[str]) -> str:
+    """标记词正则分支：拉丁词按词边界（ga 不命中 gaming），汉字按子串。"""
+    return "|".join(re.escape(m) + ("(?![a-z])" if re.search(r"[a-z]", m) else "")
+                    for m in markers)
+
+
+def _has_marker(text: str, markers: list[str] | None = None) -> bool:
+    markers = release_markers() if markers is None else markers
+    if not markers:
+        return False
+    return re.search(rf"(?<![a-z])(?:{_marker_alt(markers)})", _norm_source(text)) is not None
 
 
 # 人工校正可引入 yml 清单外的新变体（V-M17，用户 2026-10 拍板：人工确认的变体无条件接受）。
@@ -143,12 +166,18 @@ def _dot0_twin(version: str) -> str | None:
 
 
 def known_spelling(known: set | None, series: str, version: str, variant: str) -> str:
-    """精确登记优先；仅在精确缺失时采用同系列、同变体的 .0 孪生写法。"""
+    """持久写法：①精确登记 → 原写法；②同系列同变体的 .0 孪生已登记 → 孪生；
+    ③同系列**任意变体**只用过原写法与孪生中的一种 → 沿用那种（正式版 Hunyuan|4|'' 跟随
+    已登记的 Hunyuan|4.0|Preview → 4.0）；两种都在用或都没有 → 原写法（不猜）。"""
     if known and (series, version, variant) in known:
         return version
     twin = _dot0_twin(version)
     if twin and known and (series, twin, variant) in known:
         return twin
+    if twin and known:
+        used = {v for (s, v, _var) in known if s == series and v in (version, twin)}
+        if used == {twin}:
+            return twin
     return version
 
 
@@ -237,14 +266,17 @@ def build_anchors(transcript: str, title: str = "",
     """构建本视频锚点集（不依赖 LLM 输出）。返回：
       {"versions": {series: set(version)},           # (series, version) 邻接锚点
        "combos":   {series: set((version, variant))}, # (series, version, variant) 组合锚点
-       "series":   set(series)}                        # 裸系列 token（无邻接数字）出现
+       "series":   set(series),                        # 裸系列 token（无邻接数字）出现
+       "release":  {series: set(version)}}             # 版本后紧邻发布版标记（正式版）
     version 存**原始提及数字**（未过 version_map），核验完再由调用方映射。
     """
     data = data if data is not None else load_series()
     src = _norm_source(transcript + "\n" + title)
     versions: dict[str, set] = {}
     combos: dict[str, set] = {}
+    release: dict[str, set] = {}
     series_seen: set = set()
+    markers = release_markers()
 
     for series, cfg in data.items():
         aliases = _series_alias_tokens(cfg)
@@ -283,10 +315,18 @@ def build_anchors(transcript: str, title: str = "",
             else:
                 combos.setdefault(series, set()).add((v, ""))
 
+        # 发布版标记：alias + 版本 + 紧邻「正式版/release」（混元4正式版、Hy4正式版）→ 该系列该版本
+        # 被明说是正式款（只按系列+版本相邻认，不串到同句其他模型）。
+        if markers:
+            rel_pat = (rf"(?<![a-z])(?:{alias_alt}){_CJK_SEP}{vlet_re}(?P<v>{_VER_RE})"
+                       rf"{_CJK_SEP}(?:{_marker_alt(markers)})")
+            for m in re.finditer(rel_pat, src):
+                release.setdefault(series, set()).add(m.group("v"))
+
         # 变体词形单独邻接版本（如 "step3.7 flash" 已被上式吞；此处兜 "flash 3.7 glm" 等
         # 少见倒序不处理——组合锚点以上式的紧邻捕获为准）。
 
-    return {"versions": versions, "combos": combos, "series": series_seen}
+    return {"versions": versions, "combos": combos, "series": series_seen, "release": release}
 
 
 # ---------- 每记录解析：raw 纠错 + 版本锚定 + 共指兜底（plan M02/M03）----------
@@ -404,14 +444,30 @@ def _coref(series: str, variant: str, anchors: dict, known: set | None,
     return None, variant, False
 
 
+def _twin_in(version: str, pool: set) -> str | None:
+    """version 或其 .0 孪生在 pool 中 → 返回 pool 里的那个写法；否则 None。"""
+    if version in pool:
+        return version
+    twin = _dot0_twin(version)
+    return twin if twin and twin in pool else None
+
+
 def resolve_record(model_raw: str, model_series: str, model_version: str,
                    model_variant: str, anchors: dict, *, data: dict | None = None,
                    known: set | None = None) -> tuple[str, str, str, str]:
     """把 LLM 的 (raw, series, version, variant) 解析为 (canonical, series, version, variant)。
     canonical=='UNKNOWN' 时后三者为 ''。plan M02/M03 六步。version 存**已过 version_map**
-    的归一值，与 known_versions 三元组一致。known：已知版本集，供裸名单版本模型共指兜底。"""
+    的归一值，与 known_versions 三元组一致。known：已知版本集，供裸名单版本模型共指兜底。
+    发布版标记（正式版）判定表见 docs plan batch-bugs D-C：raw 带标记 → 无变体；源文本该系列+版本
+    带标记 → LLM 臆测的变体（无组合锚点）改无变体、不做唯一已知变体补全；同版本又另有变体
+    组合锚点 → UNKNOWN（不猜）。"""
     data = data if data is not None else load_series()
     UNK = ("UNKNOWN", "", "", "")
+    markers = release_markers()
+    raw_marker = _has_marker(model_raw, markers)
+    llm_variant = (model_variant or "").strip()
+    if llm_variant and _has_marker(llm_variant, markers):
+        llm_variant = ""  # LLM 把「正式版」当变体填 → 视为无变体
 
     # 步骤1：raw 拆词纠错（命中优先于 LLM 的 series）
     raw_series, raw_variant = _match_series_from_raw(model_raw, data)
@@ -425,7 +481,7 @@ def resolve_record(model_raw: str, model_series: str, model_version: str,
     elif raw_series is not None:
         # raw 与 LLM 系列一致：保留 LLM version；raw 的变体昵称（如小一哥）覆盖 LLM 变体
         series = raw_series
-        variant = raw_variant or (model_variant or "").strip()
+        variant = raw_variant or llm_variant
         cand_versions = []
         if model_version:
             cand_versions.append(norm_version(model_version))
@@ -433,7 +489,7 @@ def resolve_record(model_raw: str, model_series: str, model_version: str,
             cand_versions.append(rd)
     else:
         series = llm_series
-        variant = (model_variant or "").strip()
+        variant = llm_variant
         cand_versions = []
         if model_version:
             cand_versions.append(norm_version(model_version))
@@ -442,15 +498,21 @@ def resolve_record(model_raw: str, model_series: str, model_version: str,
 
     if series is None:
         return UNK
+    if raw_marker:
+        variant = ""  # 判定表第1行：raw 明说正式版
     if variant and variant not in _series_variants(data[series]):
         return UNK  # 未知变体不自动登记 → UNKNOWN
 
-    # 步骤2：版本锚定核验（候选数字必须与该系列邻接出现过）
+    # 步骤2：版本锚定核验（候选数字必须与该系列邻接出现过；.0 孪生等价，取源文本写法——
+    # 「混源4.0正式版」锚不上时，同视频「混元4」的锚点仍能证实 4.0）
     anchored_versions = anchors["versions"].get(series, set())
     version = None
+    if rd and rd in cand_versions:  # raw 原文听到的版本优先于 LLM 填的版本
+        cand_versions = [rd] + [cv for cv in cand_versions if cv != rd]
     for cv in cand_versions:
-        if cv and cv in anchored_versions:
-            version = cv
+        hit = _twin_in(cv, anchored_versions) if cv else None
+        if hit is not None:
+            version = hit
             break
 
     # 步骤4：共指兜底（本视频锚定优先，无锚点/歧义退已知版本集）
@@ -461,14 +523,32 @@ def resolve_record(model_raw: str, model_series: str, model_version: str,
         if version is None:
             return UNK
 
-    # M03 总闸：最终 (version, variant) 组合必须 ∈ 锚定组合集。
+    # 已口播版本闸：raw 带的版本号确是本系列的锚定提及时，最终版本只能是它（或其 .0 孪生），
+    # 已知版本集不得把它换成别的版本（根因：混元4.0 被破歧成 Hunyuan 3.0）。
+    if rd and _twin_in(rd, anchored_versions) is not None:
+        allowed = {_apply_version_map(series, x, data) for x in (rd, _dot0_twin(rd)) if x}
+        if _apply_version_map(series, norm_version(version), data) not in allowed:
+            return UNK
+
+    # 发布版标记（判定表第3–7行；第1行已在上面处理，第2行 raw 变体词照常）
+    combos = anchors["combos"].get(series, set())
+    rel_versions = anchors.get("release", {}).get(series, set())
+    released = raw_marker or _twin_in(version, rel_versions) is not None
+    if released and not raw_marker and not raw_variant:
+        if variant and not any(_twin_in(version, {v}) and var == variant for v, var in combos):
+            variant = ""  # 第4行：正式版覆盖 LLM 臆测、无组合锚点的变体
+        if not variant and any(_twin_in(version, {v}) and var for v, var in combos):
+            return UNK    # 第6行：同版本正式版与变体都被提到 → 不猜
+
+    # M03 总闸：最终 (version, variant) 组合必须 ∈ 锚定组合集（.0 孪生等价）。
     # 例外：来自已知版本集的兜底/破歧（from_known）——known 集即权威，跳过本视频组合闸。
-    if not from_known and (version, variant) not in anchors["combos"].get(series, set()):
+    if not from_known and not any(_twin_in(version, {v}) and var == variant for v, var in combos):
         return UNK
 
     # 变体协调：version 口播但 variant 未提及（如「step 3.7」）——若 (series,version) 在
     # known 中恰有一个变体、且当前 (version,'') 非已知组合 → 采用该唯一已知变体（Step→Flash）。
-    if variant == "" and not _known_has(known, series, version, "", data):
+    # 明说正式版（第1/7行）时不补。
+    if variant == "" and not released and not _known_has(known, series, version, "", data):
         alt = _unique_known_variant(known, series, version, data)
         if alt is not None:
             variant = alt

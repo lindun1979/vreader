@@ -38,8 +38,13 @@
   不自动判定；标题系列只是 UNKNOWN 时改报「模型未识别」而非「无任何记录」；见 `pipeline._receipt_warnings`）。
 - **`.0` 孪生写法按已登记写法归一**（WP-A）：`norm_version` 仍不去 `.0`（3.0≠3 的全局语义不改），
   但 `models.known_spelling` 在精确写法未登记、而其孪生（`5`↔`5.0`，仅整数与单个 `.0`）已登记时沿用已登记写法
-  （提取 `resolve_record` / 校正 `normalize_triple` 两入口）；两写法都已登记按精确写法。批量确认拒绝
+  （提取 `resolve_record` / 校正 `normalize_triple` 两入口）：先看同变体，再看**同系列任意变体**（2026-11 起：
+  正式版 `Hunyuan|4|''` 跟随已登记的 `Hunyuan|4.0|Preview` → `Hunyuan 4.0`）；同系列两种写法都在用 → 按精确写法。批量确认拒绝
   「孪生已登记的 pending_new_version」（不批准不登记，回执逐条给 `=系列/版本/变体` 校正命令，`twin_blocked_pending`）。
+- **发布版标记与已口播版本**（2026-11）：models.yml 顶层 `release_markers`（正式版/release…，非系列，`load_series` 剥离）。
+  raw 带标记、或源文本该系列+版本紧邻标记（`anchors["release"]`）→ 无变体、不做唯一已知变体补全；同版本另有变体
+  组合锚点 → UNKNOWN（判定表见 `resolve_record` docstring）。版本锚定接受 `.0` 孪生等价；raw 的版本号是本系列锚定提及时
+  优先于 LLM 版本，且最终版本只能是它或其孪生（known 破歧不得换成别的版本）。
 - 单实例执行权：数据目录 flock（serve 最先取），CLI 写路径同锁，`--board` 纯读不取锁。
 - 执行边界：外网/重型阶段带 subprocess timeout + 下载字节/时限硬限 + 任务总预算；
   健康 healthz 三态判定，不健康返 503（线程死/outbox 积压/db 连错/低磁盘/ASR 卡死）。
