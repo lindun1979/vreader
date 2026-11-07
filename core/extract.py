@@ -508,6 +508,8 @@ def _call_openai(prompt: str, *, timeout: int = 300, model: str | None = None) -
             data = json.loads(resp.read())
     except urllib.error.URLError as e:
         raise ExtractError(f"LLM 请求失败: {e}") from e
+    except (TimeoutError, OSError) as e:  # 读响应超时/连接中断：须转 ExtractError 才会走兜底链
+        raise ExtractError(f"LLM 请求超时或中断: {e}") from e
     except json.JSONDecodeError as e:
         raise ExtractError(f"LLM 响应非 JSON: {e}") from e
     if data.get("error"):

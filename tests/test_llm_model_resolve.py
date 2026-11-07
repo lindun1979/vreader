@@ -13,6 +13,7 @@ LIST = ("gemini-4-argon-medium\tGemini 4 Argon (Medium)\n"
         "gemini-x-flash-medium\tbroken\n"
         "gemini-3.8-flash-high\tGemini 3.8 Flash (High)\n")
 REC = json.dumps({"records": []})
+_ORIG_CALL_OPENAI = extract._call_openai
 
 
 class FakeCli:
@@ -177,3 +178,30 @@ def test_eval_repeat_model_flag(monkeypatch, tmp_path):
     assert s["model"] == "gemini-4-argon-medium"
     meta = json.loads((tmp_path / "out" / vid / "run0.meta.json").read_text())
     assert meta["model"] == "gemini-4-argon-medium"
+
+
+def test_openai_read_timeout_falls_back(monkeypatch):
+    """cliproxy 读响应超时（socket TimeoutError）须转 ExtractError，走兜底链并分类 timeout。"""
+    import urllib.request
+    monkeypatch.setattr(config, "LLM_BACKEND", "openai")
+    monkeypatch.setattr(config, "LLM_MODEL", "gemini-flash-latest")
+    monkeypatch.setattr(config, "LLM_MODEL_FALLBACK", ["gemini-3.5-flash"])
+    monkeypatch.setattr(extract, "_call_openai", _ORIG_CALL_OPENAI)
+
+    class Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": REC}}]}).encode()
+
+    def fake_urlopen(req, timeout):
+        if json.loads(req.data)["model"] == "gemini-flash-latest":
+            raise TimeoutError("timed out")
+        return Resp()
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    text, llm_model, reason = extract._call_llm("p")
+    assert llm_model == "openai:gemini-3.5-flash" and reason == "timeout"
