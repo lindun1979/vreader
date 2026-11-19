@@ -254,3 +254,9 @@ tests/       pytest；gold/ 真值集与合成回放 fixture 进仓，`fixtures/
   `王者BUGK005` 前缀并把 `DBT6` 改成 `GBT6`，编辑距离 10>3）。已实施：证据前缀剥离（见不变量）、
   prompt 示例去前缀并明令照抄错字、回执给丢弃身份 + UNKNOWN 候选版本/可粘贴校正命令、reprocess 优先
   沿用 extract 标题（tasks.title 常为空）。规划 `docs/plans/vreader-evidence-prefix-unknown-receipt-plan-v1.md`。
+- **2026-11-19 主提取模型换 Hydrogen + Gemini 三兄弟糊名**：`gemini-flash-latest` 从 11-13 起频繁 503，落到兜底
+  （回执分类为 other）。gold 评测后主模型改为 `Gemini 4 Hydrogen`（156/167，和 3.8 持平）；GLM 5.3 慢、长视频返回空，未采用。
+  视频 7709（Gemini 4 Argon/Carbon/Hydrogen）共 8 条全部 UNKNOWN，起因有三：Gladia 把 Gemini 糊成 Germanite 等写法、
+  Carbon/Hydrogen 是新变体、LLM 改写证据丢了 1 条。修复：Gemini 加糊写别名；`hy` 不再误中 Hydrogen；raw 先命中系列别名时
+  也能识别学来的变体；cliproxy 请求一律带 `x-opencode-session`。生产上用 `vr确认` 登记 Carbon/Hydrogen，再用
+  `repair_extract.py` 补回 Hydrogen×D001。待办：把模型评测做成标准流程（见 memory `model-eval-procedure-handoff`）。
