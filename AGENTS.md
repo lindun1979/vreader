@@ -5,7 +5,7 @@
 详细规划见 `docs/plans/vreader-mvp-plan-v6.md`（经 6 轮对抗评审收敛）。
 
 **状态：已上线生产（launchd `ai.chivox.vreader`，运维斯登记）。** 主转写为 Gladia、失败时回落到
-本地 SenseVoiceSmall，生产提取走 osaka cliproxy 的 `gemini-flash-latest`（2026-11 起，弃用 agy）。研发测试全量 445 项。
+本地 SenseVoiceSmall，生产提取走 osaka cliproxy 的 `Gemini 4 Hydrogen`（2026-11-19 起；弃用 agy）。研发测试全量 449 项。
 
 ## 纪律（public 仓，硬禁令）
 
@@ -96,8 +96,11 @@
   无 RPM/RPD 限、~4.5x 实时；工具 `ops/live_transcribe.py`，**未接入主管线**、生产 wss 需代理；
   详见 `docs/asr-gemini-transcribe-vs-gladia-eval.md`。当前生产仍 Gladia。）
 - **提取 LLM**：`LLM_BACKEND` 可选 `agy`（Antigravity CLI）/ `openai`（:8317 cliproxy）/ `claude`（本地 CLI）。
-  **生产（2026-11-07 起）`LLM_BACKEND=openai`，主 `gemini-flash-latest`（cliproxy 别名，现指 3.8 Flash，
-  随 cliproxy 自动跟最新），兜底 `gemini-3.5-flash,gemini-3.5-flash-lite`**；cliproxy 在 osaka（3 个 AI Studio
+  **生产（2026-11-19 起）`LLM_BACKEND=openai`，主 `Gemini 4 Hydrogen`（cliproxy 模型 id 含空格，`.env` 不加引号），
+  兜底 `gemini-flash-latest,gemini-3.5-flash`**（11-07～11-19 主为 `gemini-flash-latest`，11-13 起频繁 503 落兜底）。
+  gold 167 格（11-19）：Hydrogen 156（=3.8，错格同源）、opencode `glm-5.3` 125/137（30 格的 7674 等 9 分钟后返回空，
+  其余同 Hydrogen 少 1 格，每条 2～9 分钟）、`oc-glm-5.3-flash` 140。cliproxy 请求一律带 `x-opencode-session`
+  （`glm-5.3` 无 oc- 前缀也强制）。以下为 11-07 记录：cliproxy 在 osaka（3 个 AI Studio
   免费 key，round-robin，每 key 每 flash 模型约 20 次/天）。gold 167 格：3.8 156、3.5 Flash 155（差额全在 7677
   评测环境缺已知集 + 7668 两格 G002 未编号）；7704 批量题只有 3.8 提对（3.5 的批量证据被丢）。
   **免费 3.7/3.8 常 503 high demand**：cliproxy `request-retry: 3` 会把 3 个 key 一起打进冷却，冷却期内秒回
@@ -177,11 +180,11 @@ launchd 管理（禁 nohup），登记运维斯 SERVICES.md。
 | office:vreader | remote:feishu-open-api | 硬 | 回执/榜单发不出，outbox 积压超 1h 后 healthz 503 |
 | office:vreader | remote:gladia-api | 软 | 回落本地 SenseVoice：变慢、模型名易糊（回执与榜单显式警示） |
 | office:vreader | remote:singreality-proxy | 软 | Gladia 直连失败时的代理兜底失效，直连也不通则回落本地 SenseVoice |
-| office:vreader | osaka:cliproxy.service | 硬 | 提取主通道（gemini-flash-latest）与兜底全在此，挂了新视频提取失败（终态失败通知） |
+| office:vreader | osaka:cliproxy.service | 硬 | 提取主通道（Gemini 4 Hydrogen）与兜底全在此，挂了新视频提取失败（终态失败通知） |
 
 ## 开发与测试
 
-`pytest -q`（445 项全绿，**只在研发机跑**；生产机不跑 pytest）。
+`pytest -q`（449 项全绿，**只在研发机跑**；生产机不跑 pytest）。
 
 ```bash
 python3.11 -m venv .venv && . .venv/bin/activate
