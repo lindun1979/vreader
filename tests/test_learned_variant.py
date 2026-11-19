@@ -95,3 +95,10 @@ def test_new_variant_not_accepted_without_flag():
 
 def test_load_series_without_db_is_plain_yml():
     assert "Argon" not in models.load_series()["Gemini"].get("variants", {})
+
+
+def test_learned_variant_found_in_raw_after_series_alias():
+    """raw 先命中系列别名（germanite）时，学来的变体（argon）也要识别，不得丢成无变体。"""
+    d = models.add_variant(models.load_series(), "Gemini", "Argon")
+    assert models._match_series_from_raw("Germanite4Argon", d) == ("Gemini", "Argon")
+    assert models._match_series_from_raw("Gemini 4 Argon", d) == ("Gemini", "Argon")

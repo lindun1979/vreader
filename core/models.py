@@ -297,7 +297,10 @@ def build_anchors(transcript: str, title: str = "",
 
         # 裸系列出现（alias token 作为词出现）。前缀允许接在数字后（ASR 常把 bug 编号与
         # 模型名连写，如 S001GPT5.6soul）——用 (?<![a-z]) 而非 (?<![a-z0-9])。
-        if re.search(rf"(?<![a-z])(?:{alias_alt})", src):
+        # ≤2 字母的拉丁别名（hy/gm/ds）后不得再接 ≥2 字母，防 hydrogen 命中混元 hy。
+        bare_alt = "|".join(sorted((re.escape(a) + ("(?![a-z]{2})" if re.fullmatch(r"[a-z]{1,2}", a) else "")
+                                    for a in aliases), key=len, reverse=True))
+        if re.search(rf"(?<![a-z])(?:{bare_alt})", src):
             series_seen.add(series)
 
         # 版本锚点：alias + 连接符 + [版本字母] + 数字（+ 可选紧邻变体词）
@@ -388,7 +391,9 @@ def _match_series_from_raw(raw: str, data: dict) -> tuple[str | None, str]:
             series, variant = s, var
             break
     if series is not None and not variant:
-        for w, var in generic.items():
+        # 通用变体词 + 本系列专属变体词（含学来的变体，如 germanite4argon 的 argon）
+        own = [(tok, var) for tok, s, var in tokens if s == series and var and re.search(r"[a-z]", tok)]
+        for w, var in [*generic.items(), *own]:
             # 变体词允许紧贴版本数字（v4flash）：前不接字母、后不接字母
             if var in _series_variants(data[series]) and re.search(
                     rf"(?<![a-z]){re.escape(w)}(?![a-z])", src):

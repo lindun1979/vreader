@@ -133,3 +133,11 @@ def test_fable_5_and_5_1_distinct():
     known = _seed_known()
     assert _resolve("飞包5", "", "", "", "飞包5 出场", known=known)[0] == "Fable 5"
     assert _resolve("fable5.1", "", "", "", "fable5.1 出场", known=known)[0] == "Fable 5.1"
+
+
+def test_short_latin_alias_not_prefix_of_word():
+    """混元别名 hy 不得命中 Hydrogen（7709 标题「Gemini Argon，Carbon，Hydrogen」误报混元漏提）；hy4 仍命中。"""
+    from core import models as m
+    assert "Hunyuan" not in m.build_anchors("", "Gemini Argon，Carbon，Hydrogen")["series"]
+    assert "Hunyuan" in m.build_anchors("", "Hy4正式版")["series"]
+    assert "Gemini" in m.build_anchors("", "Germanite Carbon 第一轮")["series"]

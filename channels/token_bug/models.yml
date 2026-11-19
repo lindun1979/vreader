@@ -153,7 +153,9 @@ GPT:
 Gemini:
   format: "Gemini {v}"
   # 别名含 ASR 糊写（germany/german/jermony/jermaine 等）
-  aliases: [gemini, germany, german, jermony, jermaine, 双子星, 北美大豆包, 北美豆包]
+  # germanite/germanet/germanize/jermonite/termonite：Gladia 糊法（7709426400641502504）
+  aliases: [gemini, germany, german, jermony, jermaine, germanite, germanet, germanize, jermonite, termonite,
+            双子星, 北美大豆包, 北美豆包]
   variants:
     Flash:
       aliases: [flash, manflash, manyflash, manf]

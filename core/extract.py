@@ -492,17 +492,22 @@ def _call_openai(prompt: str, *, timeout: int = 300, model: str | None = None) -
     """调 OpenAI 兼容端点（:8317 cliproxy 的 oc-qwen3.8-flash 等）。"""
     import urllib.request
     import urllib.error
+    model = model or config.LLM_MODEL
     body = json.dumps({
-        "model": model or config.LLM_MODEL,
+        "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0,
     }).encode()
+    # cliproxy 的 opencode 出口（oc-* 及 glm-5.3 等不带前缀的）强制要会话头；任意 UUID、仅路由用，
+    # 其他模型忽略，故一律带上
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {config.LLM_API_KEY}",
+        "x-opencode-session": str(uuid.uuid4()),
+    }
     req = urllib.request.Request(
         config.LLM_BASE_URL.rstrip("/") + "/chat/completions", data=body,
-        method="POST", headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {config.LLM_API_KEY}",
-        })
+        method="POST", headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read())

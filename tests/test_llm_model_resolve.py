@@ -205,3 +205,27 @@ def test_openai_read_timeout_falls_back(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     text, llm_model, reason = extract._call_llm("p")
     assert llm_model == "openai:gemini-3.5-flash" and reason == "timeout"
+
+
+def test_openai_sends_opencode_session_header(monkeypatch):
+    """cliproxy 的 opencode 出口（glm-5.3 等，不限 oc- 前缀）缺 x-opencode-session 会 400。"""
+    import urllib.request
+    monkeypatch.setattr(extract, "_call_openai", _ORIG_CALL_OPENAI)
+    seen = {}
+
+    class Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": REC}}]}).encode()
+
+    def fake_urlopen(req, timeout):
+        seen["h"] = {k.lower(): v for k, v in req.header_items()}
+        return Resp()
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    extract._call_openai("p", model="glm-5.3")
+    assert len(seen["h"]["x-opencode-session"]) == 36
