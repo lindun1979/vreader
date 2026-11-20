@@ -5,7 +5,7 @@
 详细规划见 `docs/plans/vreader-mvp-plan-v6.md`（经 6 轮对抗评审收敛）。
 
 **状态：已上线生产（launchd `ai.chivox.vreader`，运维斯登记）。** 主转写为 Gladia、失败时回落到
-本地 SenseVoiceSmall，生产提取走 osaka cliproxy 的 `Gemini 4 Hydrogen`（2026-11-19 起；弃用 agy）。研发测试全量 461 项。
+本地 SenseVoiceSmall，生产提取走 osaka cliproxy 的 `gpt-6.1-terra`、兜底 `Gemini 4 Hydrogen`（2026-11-20 起；弃用 agy）。研发测试全量 461 项。
 
 ## 纪律（public 仓，硬禁令）
 
@@ -96,8 +96,10 @@
   无 RPM/RPD 限、~4.5x 实时；工具 `ops/live_transcribe.py`，**未接入主管线**、生产 wss 需代理；
   详见 `docs/asr-gemini-transcribe-vs-gladia-eval.md`。当前生产仍 Gladia。）
 - **提取 LLM**：`LLM_BACKEND` 可选 `agy`（Antigravity CLI）/ `openai`（:8317 cliproxy）/ `claude`（本地 CLI）。
-  **生产（2026-11-19 起）`LLM_BACKEND=openai`，主 `Gemini 4 Hydrogen`（cliproxy 模型 id 含空格，`.env` 不加引号），
-  兜底 `gemini-flash-latest,gemini-3.5-flash`**（11-07～11-19 主为 `gemini-flash-latest`，11-13 起频繁 503 落兜底）。
+  **生产（2026-11-20 起）`LLM_BACKEND=openai`，主 `gpt-6.1-terra`（cliproxy openai 出口 = codex 订阅额度，与 NewRead 等共用），
+  兜底只有 `Gemini 4 Hydrogen`**（cliproxy 模型 id 含空格，`.env` 不加引号）。gold 167 格（11-20，`ops/model_eval.py`）：
+  terra 156、检查集 16/18，与 Hydrogen 打平且错格同源，单条中位 20s（Hydrogen 159s）；`gpt-5.6-luna` 150。
+  11-19～11-20 主为 Hydrogen、兜底 `gemini-flash-latest,gemini-3.5-flash`；11-07～11-19 主为 `gemini-flash-latest`（11-13 起频繁 503）。
   gold 167 格（11-19）：Hydrogen 156（=3.8，错格同源）、opencode `glm-5.3` 125/137（30 格的 7674 等 9 分钟后返回空，
   其余同 Hydrogen 少 1 格，每条 2～9 分钟）、`oc-glm-5.3-flash` 140。cliproxy 请求一律带 `x-opencode-session`
   （`glm-5.3` 无 oc- 前缀也强制）。以下为 11-07 记录：cliproxy 在 osaka（3 个 AI Studio
@@ -180,7 +182,7 @@ launchd 管理（禁 nohup），登记运维斯 SERVICES.md。
 | office:vreader | remote:feishu-open-api | 硬 | 回执/榜单发不出，outbox 积压超 1h 后 healthz 503 |
 | office:vreader | remote:gladia-api | 软 | 回落本地 SenseVoice：变慢、模型名易糊（回执与榜单显式警示） |
 | office:vreader | remote:singreality-proxy | 软 | Gladia 直连失败时的代理兜底失效，直连也不通则回落本地 SenseVoice |
-| office:vreader | osaka:cliproxy.service | 硬 | 提取主通道（Gemini 4 Hydrogen）与兜底全在此，挂了新视频提取失败（终态失败通知） |
+| office:vreader | osaka:cliproxy.service | 硬 | 提取主通道（gpt-6.1-terra）与兜底（Gemini 4 Hydrogen）全在此，挂了新视频提取失败（终态失败通知） |
 
 ## 开发与测试
 
@@ -270,3 +272,8 @@ tests/       pytest；gold/ 真值集与合成回放 fixture 进仓，`fixtures/
   Carbon/Hydrogen 是新变体、LLM 改写证据丢了 1 条。修复：Gemini 加糊写别名；`hy` 不再误中 Hydrogen；raw 先命中系列别名时
   也能识别学来的变体；cliproxy 请求一律带 `x-opencode-session`。生产上用 `vr确认` 登记 Carbon/Hydrogen，再用
   `repair_extract.py` 补回 Hydrogen×D001。待办：把模型评测做成标准流程（见 memory `model-eval-procedure-handoff`）。
+- **2026-11-20 模型评测标准化 + 主模型换 gpt-6.1-terra**：新增 `ops/model_eval.py`（快照/分出口并行跑/离线复算/对比表），
+  检查视频 7704/7709 由用户人工标注进 `tests/gold/token_bug/check.json`。查明 cliproxy 无主动限速但上游 429/503 后
+  凭据冷却、冷却期内秒回错误，评测据此等待重试。实测 `gpt-6.1-terra` 156/167 = Hydrogen，且快 7～8 倍、无 Gemini 免费 key 503 问题
+  → 生产主模型改 terra、兜底只留 Hydrogen（`.env` 备份 `.env.bak.20261120-terra`）。已知问题未修：7709 里 Hydrogen 的记录
+  会被归成不带变体的 `Gemini 4` 或 UNKNOWN（各模型都有，归一代码问题，非模型问题）。
