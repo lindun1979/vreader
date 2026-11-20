@@ -1,0 +1,22 @@
+{
+  "_note": "检查集（gold 外，用户 2026-11-20 人工标注）。truth 同 gold.json：canonical → 编号 → 得分；未参加（无资格）的格不列，报了即多报。batch：博主未念编号、一句话公布结果的题，canonical → 等级 → {得分: 道数}。由 ops/model_eval.py 单独计分，不并入 gold 167。",
+  "videos": [
+    {
+      "aweme_id": "7704993286842354980",
+      "title": "Hy4正式版挑战祖传代码 进步巨大，潜力同样巨大",
+      "_note": "口播只念了 S001、D001；B001-003、S002-003、G001-003 是「除了S001之外其他八道题…全部一轮作对」。K004/K005 未参加。",
+      "truth": {"Hunyuan 4.0": {"S001": 0, "D001": 0}},
+      "batch": {"Hunyuan 4.0": {"青铜": {"1": 3}, "白银": {"1": 2}, "黄金": {"2": 3}}}
+    },
+    {
+      "aweme_id": "7709426400641502504",
+      "title": "Gemini4扬眉吐气了，三兄弟挑战祖传代码 Gemini Argon，Carbon，Hydrogen",
+      "_note": "Hydrogen 未参加 K004。",
+      "truth": {
+        "Gemini 4 Argon": {"K005": 2, "D001": 1, "K004": 0},
+        "Gemini 4 Carbon": {"K005": 3, "D001": 1, "K004": 0},
+        "Gemini 4 Hydrogen": {"K005": 2, "D001": 0}
+      }
+    }
+  ]
+}

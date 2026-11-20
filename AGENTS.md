@@ -5,7 +5,7 @@
 详细规划见 `docs/plans/vreader-mvp-plan-v6.md`（经 6 轮对抗评审收敛）。
 
 **状态：已上线生产（launchd `ai.chivox.vreader`，运维斯登记）。** 主转写为 Gladia、失败时回落到
-本地 SenseVoiceSmall，生产提取走 osaka cliproxy 的 `Gemini 4 Hydrogen`（2026-11-19 起；弃用 agy）。研发测试全量 449 项。
+本地 SenseVoiceSmall，生产提取走 osaka cliproxy 的 `Gemini 4 Hydrogen`（2026-11-19 起；弃用 agy）。研发测试全量 461 项。
 
 ## 纪律（public 仓，硬禁令）
 
@@ -184,7 +184,7 @@ launchd 管理（禁 nohup），登记运维斯 SERVICES.md。
 
 ## 开发与测试
 
-`pytest -q`（449 项全绿，**只在研发机跑**；生产机不跑 pytest）。
+`pytest -q`（461 项全绿，**只在研发机跑**；生产机不跑 pytest）。
 
 ```bash
 python3.11 -m venv .venv && . .venv/bin/activate
@@ -204,7 +204,17 @@ python ops/replay_extract_fixture.py --fixture ... --sha256 ... --expect-file ..
                                              # 提取回放（不调 LLM）
 python ops/eval_extract_repeat.py --data <副本> --videos gold --runs N --out <dir> [--prompt <模板>]
                                              # prompt 重复评测（agy，nonce 防缓存；研发机须带 AGY_PROXY）
+python ops/model_eval.py run --models "A,B"  # 新模型标准评测：拉快照→分出口跑→对比表（data/eval/runs/<ts>/report.md）
+python ops/model_eval.py report <run> [<run>...] [--snapshot <dir>]   # 离线复算（不调 LLM，按当前代码）
 ```
+
+- **模型评测（`ops/model_eval.py`）**：快照=生产 gold 13 条 + 检查视频 7704/7709 的 transcript/extract，
+  外加只读导出的 known_versions（建只含该表的 vreader.db，已学变体靠它）。gold 视频用旧 extract 的
+  `known_versions_used`（与历史基线可比），检查视频用生产当前全部 known_versions。按 cliproxy `/v1/models`
+  的 `owned_by` 分出口：同出口串行、出口间并行；google 出口请求间隔 30s（key 池与生产共用）。
+  cliproxy 无主动限速，但上游 429/503 后凭据**冷却**、冷却期内秒回错误 → 限流类错误等 5/10/15 分钟重试；
+  空返回/超时/其他错误不重试。`--out` 指向已有运行目录即续跑。基线：Hydrogen 156/167（≥156 算同档）。
+  检查集真值 `tests/gold/token_bug/check.json`（可选，`batch` 段记未编号批量题）。
 
 - 真值集：`tests/gold/token_bug/gold.json`（用户人工标注 13 视频得分 + aweme_id 映射，进仓）；
   `eval_gold.py` 比较键 aweme_id×canonical×bug_id，缺格/多报/重复/冲突全计错，双口径 + 逐格 diff。
